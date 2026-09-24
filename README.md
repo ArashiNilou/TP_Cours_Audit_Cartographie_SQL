@@ -9,7 +9,8 @@ TP_Cours_Audit_Cartographie_SQL/
 ├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
-│   ├── mcd.mmd                # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
+│   ├── mcd.mmd               # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
+│   ├── mld.mmd               # MLD Merise (diagramme Mermaid, avec FK et type SQL)
 │   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
 ├── sql/
 │   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index

@@ -9,7 +9,8 @@ TP_Cours_Audit_Cartographie_SQL/
 ├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
-│   ├── mcd.mmd                # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
+│   ├── mcd.mmd               # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
+│   ├── mld.mmd               # MLD Merise (diagramme Mermaid, avec FK et type SQL)
 │   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
 ├── sql/
 │   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index
@@ -27,11 +28,12 @@ TP_Cours_Audit_Cartographie_SQL/
 
 ```
 
-Chaque couche a une responsabilité unique : `docs/` porte la modélisation
-visuelle, `sql/` porte la définition des données en trois scripts numérotés
-et rejouables indépendamment, `src/` porte la logique d'accès à la base et
-à l'API, `scripts/` regroupe les utilitaires de développement ponctuels, et
-`main.py` reste un point d'entrée fin, sans logique métier.
+Chaque couche a une responsabilité unique :
+- `docs/` porte la modélisation visuelle, 
+- `sql/` porte la définition des données en trois scripts numérotés et rejouables indépendamment, 
+- `src/` porte la logique d'accès à la base et à l'API,
+- `scripts/` regroupe les utilitaires de développement ponctuels, et
+- `main.py` reste un point d'entrée fin, sans logique métier.
 
 ## 1. Sujet et problématique métier
 

@@ -15,8 +15,10 @@ TP_Cours_Audit_Cartographie_SQL/
 │   └── 03_queries.sql        # Requêtes d'analyse (tableau de bord RH)
 ├── src/
 │   ├── connection.py         # Connexion PostgreSQL par variables d'environnement
-│   └── schema.py             # Exécution des scripts SQL depuis Python
-└── main.py                   # Point d'entrée : test de connexion / --init
+│   ├── schema.py             # Exécution des scripts SQL depuis Python
+│   ├── api_client.py         # Client OAuth2 pour l'API France Travail (offres v2)
+│   └── ingest.py             # Transformation JSON API -> lignes 3NF + chargement
+└── main.py                   # Point d'entrée : connexion / --init / --sync-api
 ```
 
 Chaque couche a une responsabilité unique : `docs/` porte la modélisation
@@ -438,3 +440,36 @@ python main.py --init
 ```
 
 Le mot de passe reste local et n'est jamais écrit dans le dépôt.
+
+### Ingestion réelle depuis l'API France Travail
+
+Le module `src/api_client.py` implémente l'authentification OAuth2
+(flux `client_credentials`) auprès de l'endpoint de jeton France Travail,
+et `src/ingest.py` transforme les offres JSON reçues en lignes conformes
+au schéma 3NF (parsing du salaire en texte libre, gestion de l'anonymat
+d'entreprise, upsert idempotent des référentiels commune/ROME/compétence).
+
+Ajouter dans `.env` les identifiants applicatifs fournis par
+[francetravail.io](https://francetravail.io) (voir `.env.example`) :
+
+```env
+FT_CLIENT_ID=...
+FT_CLIENT_SECRET=...
+FT_TOKEN_URL=https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire
+FT_SCOPE=api_offresdemploiv2 o2dsoffre
+FT_API_BASE_URL=https://api.francetravail.io/partenaire/offresdemploi/v2
+```
+
+Puis lancer une synchronisation, avec filtres optionnels :
+
+```bash
+python main.py --sync-api --mots-cles "data engineer" --code-rome M1805 --commune 44172
+```
+
+Chaque exécution est idempotente : les offres déjà connues
+(`source_offre_id`) sont mises à jour plutôt que dupliquées, et les
+offres non conformes aux contraintes du schéma (code ROME, commune,
+date de publication ou type de contrat manquants/invalides) sont
+rejetées silencieusement, conformément à l'étape d'audit qualité du
+pipeline décrite en section 7.
+

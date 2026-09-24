@@ -17,7 +17,7 @@ Table commune {
 
 Table entreprise {
   entreprise_id bigint [pk, increment]
-  raison_sociale varchar(150) [note: "Nullable si entreprise_anonyme = true"]
+  raison_sociale varchar(250) [note: "Nullable si entreprise_anonyme = true"]
   entreprise_anonyme boolean [not null, default: false]
 
   indexes {
@@ -27,7 +27,7 @@ Table entreprise {
 
 Table metier_rome {
   rome_code varchar(5) [pk, note: "Code ROME 4.0, ex. M1805"]
-  libelle_fiche_metier varchar(150) [not null]
+  libelle_fiche_metier varchar(250) [not null]
   domaine_professionnel varchar(150) [not null]
 
   indexes {
@@ -37,7 +37,7 @@ Table metier_rome {
 
 Table competence {
   competence_id bigint [pk, increment]
-  libelle_competence varchar(150) [not null, unique]
+  libelle_competence varchar(300) [not null, unique]
   type_competence varchar(20) [not null, note: "Savoir-faire ou Savoir-être"]
 }
 

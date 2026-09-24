@@ -131,3 +131,17 @@ class FranceTravailClient:
         if response.status_code == 204 or not response.content:
             return {"resultats": []}
         return response.json()
+
+    def get_offre(self, offre_id: str) -> dict[str, Any]:
+        """Récupère une offre unique via l'endpoint /offres/{id}."""
+        response = requests.get(
+            f"{self.api_base_url}/offres/{offre_id}",
+            headers={"Authorization": f"Bearer {self._get_token()}"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise FranceTravailApiError(
+                f"Échec de la récupération de l'offre {offre_id} "
+                f"(HTTP {response.status_code}) : {response.text[:300]}"
+            )
+        return response.json()

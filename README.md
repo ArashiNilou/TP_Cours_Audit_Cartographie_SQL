@@ -243,7 +243,68 @@ Ce diagramme est également disponible en fichier autonome dans
 [`docs/mcd.mmd`](docs/mcd.mmd), à coller directement sur
 <https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
 
-### Modèle Logique des Données
+### Modèle Logique des Données (schéma)
+
+Représentation avec clés primaires, clés étrangères et types SQL cibles,
+conformément au script `sql/01_schema.sql`. Contrairement au MCD, la
+relation plusieurs-à-plusieurs est ici matérialisée par la table physique
+`EXIGENCE_OFFRE`, porteuse de sa propre clé primaire composée.
+
+```mermaid
+erDiagram
+    COMMUNE ||--o{ OFFRE : "code_insee"
+    ENTREPRISE ||--o{ OFFRE : "entreprise_id"
+    METIER_ROME ||--o{ OFFRE : "rome_code"
+    OFFRE ||--o{ EXIGENCE_OFFRE : "offre_id"
+    COMPETENCE ||--o{ EXIGENCE_OFFRE : "competence_id"
+
+    COMMUNE {
+        char_5 code_insee PK
+        varchar_5 code_postal
+        varchar_100 nom_commune
+        decimal_9_6 latitude
+        decimal_9_6 longitude
+    }
+    ENTREPRISE {
+        bigint entreprise_id PK
+        varchar_250 raison_sociale
+        boolean entreprise_anonyme
+    }
+    METIER_ROME {
+        varchar_5 rome_code PK
+        varchar_250 libelle_fiche_metier
+        varchar_150 domaine_professionnel
+    }
+    OFFRE {
+        bigint offre_id PK
+        varchar_20 source_offre_id UK
+        varchar_200 libelle_poste
+        text description
+        date date_publication
+        varchar_5 type_contrat
+        varchar_100 duree_travail
+        decimal_10_2 salaire_brut_annuel_estime
+        varchar_5 rome_code FK
+        bigint entreprise_id FK
+        char_5 code_insee FK
+    }
+    COMPETENCE {
+        bigint competence_id PK
+        varchar_300 libelle_competence UK
+        varchar_20 type_competence
+    }
+    EXIGENCE_OFFRE {
+        bigint offre_id PK_FK
+        bigint competence_id PK_FK
+        varchar_1 statut_exigence
+    }
+```
+
+Ce diagramme est également disponible en fichier autonome dans
+[`docs/mld.mmd`](docs/mld.mmd), à coller directement sur
+<https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
+
+### Modèle Logique des Données (notation textuelle)
 
 ```text
 COMMUNE(code_insee PK, code_postal, nom_commune, latitude, longitude)

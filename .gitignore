@@ -30,6 +30,8 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+*.csv
+offre*.json
 
 # --- Exports de bases de données ---
 *.sql.bak

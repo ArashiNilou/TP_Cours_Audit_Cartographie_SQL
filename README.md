@@ -181,6 +181,63 @@ l'offre (libellé, description, date de publication, type de contrat, durée
 de travail, salaire estimé) ne sont stockés qu'une seule fois, dans
 `OFFRE`, car ils dépendent uniquement de l'identifiant de l'offre.
 
+### Modèle Conceptuel des Données (schéma)
+
+Représentation Merise : entités porteuses de leurs seuls attributs
+fonctionnels (sans clé étrangère ni type SQL, conformément au MCD),
+relations nommées par un verbe métier et qualifiées par leurs cardinalités
+minimale et maximale de chaque côté. L'association `EXIGENCE`, porteuse de
+l'attribut `statut_exigence`, matérialise la relation plusieurs-à-plusieurs
+entre `OFFRE` et `COMPETENCE`.
+
+```mermaid
+erDiagram
+    COMMUNE ||--o{ OFFRE : "localise"
+    ENTREPRISE ||--o{ OFFRE : "publie"
+    METIER_ROME ||--o{ OFFRE : "categorise"
+    OFFRE ||--o{ EXIGENCE : "porte"
+    COMPETENCE ||--o{ EXIGENCE : "est requise par"
+
+    COMMUNE {
+        string code_insee
+        string code_postal
+        string nom_commune
+        decimal latitude
+        decimal longitude
+    }
+    ENTREPRISE {
+        string raison_sociale
+        boolean entreprise_anonyme
+    }
+    METIER_ROME {
+        string code_rome
+        string libelle_fiche_metier
+        string domaine_professionnel
+    }
+    OFFRE {
+        string source_offre_id
+        string libelle_poste
+        string description
+        date date_publication
+        string type_contrat
+        string duree_travail
+        decimal salaire_brut_annuel_estime
+    }
+    COMPETENCE {
+        string libelle_competence
+        string type_competence
+    }
+    EXIGENCE {
+        string statut_exigence
+    }
+```
+
+*Note de lecture Merise : les cardinalités portées sur le schéma sont
+`1,1` côté entité porteuse (`COMMUNE`, `ENTREPRISE`, `METIER_ROME`, `OFFRE`,
+`COMPETENCE`) et `0,N` côté entité dépendante, conformément au tableau des
+cardinalités ci-dessus. La notation Mermaid `||--o{` traduit ce couple
+« exactement un » / « zéro ou plusieurs ».*
+
 ### Modèle Logique des Données
 
 ```text

@@ -1,10 +1,13 @@
-"""Point d'entrée du TP : vérifie la connexion PostgreSQL ou initialise la base.
+"""Point d'entrée du TP : vérifie la connexion PostgreSQL, initialise la base ou synchronise les offres.
 
 Usage :
     python main.py                          # vérifie simplement la connexion
     python main.py --init                   # recrée le schéma et charge le jeu de données
-    python main.py --sync-api                # récupère des offres réelles et les charge
-    python main.py --sync-api --mots-cles python --commune 44172
+    python main.py --sync-api               # récupère une tranche d'offres (défaut 0-49)
+    python main.py --sync-api --paginate    # récupère TOUTES les offres de la recherche (jusqu'à 1149)
+    python main.py --sync-api --departement 75 --paginate
+    python main.py --sync-all               # récupère toutes les offres de France (parcourt les 101 départements)
+    python main.py --sync-all --mots-cles "data" --max-per-dep 200
 """
 
 import argparse
@@ -12,7 +15,7 @@ import argparse
 from dotenv import load_dotenv
 
 from src.connection import get_connection
-from src.ingest import sync_from_api
+from src.ingest import sync_all_departements, sync_from_api
 from src.schema import initialize_database
 
 load_dotenv()
@@ -44,6 +47,17 @@ def main() -> None:
         "les offres récupérées dans le schéma 3NF.",
     )
     parser.add_argument(
+        "--sync-all",
+        action="store_true",
+        help="Lance une collecte globale sur tous les départements français.",
+    )
+    parser.add_argument(
+        "--paginate",
+        action="store_true",
+        help="Active la pagination automatique par tranches de 150 pour récupérer "
+        "toutes les offres disponibles pour la recherche (jusqu'à 1149 max).",
+    )
+    parser.add_argument(
         "--mots-cles",
         help="Filtre de recherche par mots-clés (ex. 'data engineer').",
     )
@@ -56,22 +70,50 @@ def main() -> None:
         help="Filtre de recherche par code INSEE de commune (ex. '44172').",
     )
     parser.add_argument(
+        "--departement",
+        help="Filtre de recherche par code département (ex. '75', '44').",
+    )
+    parser.add_argument(
         "--range",
         dest="range_",
-        default="0-49",
-        help="Plage de résultats à récupérer, format 'debut-fin' (défaut 0-49).",
+        default=None,
+        help="Plage fixe de résultats à récupérer, format 'debut-fin' (ex. '0-49', '0-149').",
+    )
+    parser.add_argument(
+        "--max-results",
+        type=int,
+        default=None,
+        help="Nombre maximum d'offres à récupérer au total pour la recherche.",
+    )
+    parser.add_argument(
+        "--max-per-dep",
+        type=int,
+        default=None,
+        help="Nombre maximum d'offres par département avec --sync-all.",
     )
     args = parser.parse_args()
 
     if args.init:
         initialize_database()
         print("Base initialisée : schéma recréé et données de test chargées.")
+    elif args.sync_all:
+        nombre = sync_all_departements(
+            mots_cles=args.mots_cles,
+            code_rome=args.code_rome,
+            max_per_departement=args.max_per_dep,
+        )
+        print(f"\nCollecte nationale terminée : {nombre} offre(s) totale(s) chargée(s) en base.")
     elif args.sync_api:
+        # Si --paginate ou si aucun range spécifié avec un filtre, on active la pagination
+        should_paginate = args.paginate or (args.range_ is None and args.max_results is not None)
         nombre = sync_from_api(
             mots_cles=args.mots_cles,
             code_rome=args.code_rome,
             commune=args.commune,
+            departement=args.departement,
             range_=args.range_,
+            paginate=should_paginate,
+            max_results=args.max_results,
         )
         print(f"Synchronisation terminée : {nombre} offre(s) chargée(s) en base.")
     else:
@@ -80,3 +122,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

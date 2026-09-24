@@ -9,6 +9,7 @@ pouvoir rejouer une synchronisation sans dupliquer les données.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
 
@@ -17,12 +18,20 @@ import psycopg
 from .api_client import FranceTravailClient
 from .connection import get_connection
 
+logger = logging.getLogger(__name__)
+
+# Liste des 101 départements français pour le partitionnement de la collecte globale
+DEPARTEMENTS_FRANCE: list[str] = [
+    f"{i:02d}" for i in range(1, 96) if i != 20
+] + ["2A", "2B", "971", "972", "973", "974", "976"]
+
 # Capture les nombres décimaux (à virgule ou point) présents dans un texte
 # libre de salaire, par exemple "Annuel de 38000.0 Euros à 45000.0 Euros".
 _SALAIRE_NOMBRE_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
 
 # Types de contrat acceptés par la contrainte CHECK ck_offre_type_contrat_valide.
 TYPES_CONTRAT_VALIDES = {"CDI", "CDD", "MIS", "SAI", "CCE"}
+
 
 # Grands domaines professionnels de la nomenclature ROME 4.0 (France Travail),
 # indexés par la première lettre du code ROME. Utilisé en dernier recours pour
@@ -89,10 +98,11 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
     code_insee = lieu.get("commune")
     if not code_insee:
         return None
+    nom = (lieu.get("libelle") or code_insee)[:100]
     return {
-        "code_insee": code_insee,
-        "code_postal": lieu.get("codePostal") or code_insee[:2] + "000",
-        "nom_commune": lieu.get("libelle") or code_insee,
+        "code_insee": code_insee[:5],
+        "code_postal": (lieu.get("codePostal") or code_insee[:2] + "000")[:5],
+        "nom_commune": nom,
         "latitude": lieu.get("latitude"),
         "longitude": lieu.get("longitude"),
     }
@@ -100,9 +110,9 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
 
 def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
     entreprise = offre_json.get("entreprise") or {}
-    nom = entreprise.get("nom")
+    nom = (entreprise.get("nom") or "").strip()[:250]
     return {
-        "raison_sociale": nom,
+        "raison_sociale": nom or None,
         "entreprise_anonyme": not bool(nom),
     }
 
@@ -110,7 +120,7 @@ def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
 def _extract_competences(offre_json: dict[str, Any]) -> list[dict[str, str]]:
     competences = []
     for item in offre_json.get("competences") or []:
-        libelle = (item.get("libelle") or "").strip()
+        libelle = (item.get("libelle") or "").strip()[:300]
         exigence = item.get("exigence")
         if not libelle:
             continue
@@ -122,26 +132,36 @@ def _extract_competences(offre_json: dict[str, Any]) -> list[dict[str, str]]:
 
 def transform_offre(offre_json: dict[str, Any]) -> dict[str, Any]:
     """Convertit une offre JSON brute en dictionnaire prêt pour le chargement."""
+    duree = (
+        offre_json.get("dureeTravailLibelleConverti")
+        or offre_json.get("dureeTravailLibelle")
+    )
+    rome_lib = (
+        offre_json.get("romeLibelle")
+        or offre_json.get("romeCode")
+        or ""
+    )[:250]
+
     return {
-        "source_offre_id": offre_json["id"],
+        "source_offre_id": str(offre_json["id"])[:20],
         "libelle_poste": offre_json.get("intitule", "")[:200],
         "description": offre_json.get("description"),
         "date_publication": (offre_json.get("dateCreation") or "")[:10] or None,
         "type_contrat": (offre_json.get("typeContrat") or "")[:5],
-        "duree_travail": offre_json.get("dureeTravailLibelleConverti")
-        or offre_json.get("dureeTravailLibelle"),
+        "duree_travail": duree[:100] if duree else None,
         "salaire_brut_annuel_estime": parse_salaire_annuel(
             (offre_json.get("salaire") or {}).get("libelle")
         ),
         "rome_code": offre_json.get("romeCode"),
-        "rome_libelle": offre_json.get("romeLibelle") or offre_json.get("romeCode"),
+        "rome_libelle": rome_lib,
         "domaine_professionnel": resolve_domaine_professionnel(
             offre_json.get("romeCode")
-        ),
+        )[:150],
         "commune": _extract_commune(offre_json),
         "entreprise": _extract_entreprise(offre_json),
         "competences": _extract_competences(offre_json),
     }
+
 
 
 def _upsert_commune(cur: psycopg.Cursor, commune: dict[str, Any]) -> None:
@@ -299,15 +319,78 @@ def sync_from_api(
     mots_cles: str | None = None,
     code_rome: str | None = None,
     commune: str | None = None,
-    range_: str = "0-49",
+    departement: str | None = None,
+    range_: str | None = None,
+    paginate: bool = False,
+    max_results: int | None = None,
 ) -> int:
     """Interroge l'API France Travail et charge les résultats en base.
+
+    - Si paginate=True : parcourt automatiquement toutes les pages (par tranches
+      de 150) jusqu'à épuisement ou max_results (plafond API à 1149).
+    - Sinon : effectue une seule requête sur la plage range_ (par défaut '0-49').
 
     Retourne le nombre d'offres chargées.
     """
     client = FranceTravailClient()
-    payload = client.search_offres(
-        mots_cles=mots_cles, code_rome=code_rome, commune=commune, range_=range_
-    )
-    offres = payload.get("resultats", [])
+
+    if paginate:
+        offres = client.search_all_offres(
+            mots_cles=mots_cles,
+            code_rome=code_rome,
+            commune=commune,
+            departement=departement,
+            max_results=max_results,
+        )
+    else:
+        effective_range = range_ or "0-49"
+        payload = client.search_offres(
+            mots_cles=mots_cles,
+            code_rome=code_rome,
+            commune=commune,
+            departement=departement,
+            range_=effective_range,
+        )
+        offres = payload.get("resultats", [])
+
     return load_offres(offres)
+
+
+def sync_all_departements(
+    departements: list[str] | None = None,
+    mots_cles: str | None = None,
+    code_rome: str | None = None,
+    max_per_departement: int | None = None,
+) -> int:
+    """Parcourt les départements pour récupérer et charger toutes les offres.
+
+    Contourne le plafond des 1149 offres de France Travail en partitionnant la collecte
+    sur les 101 départements français (ou la sous-liste fournie).
+
+    Retourne le nombre total d'offres insérées/mises à jour.
+    """
+    client = FranceTravailClient()
+    deps = departements or DEPARTEMENTS_FRANCE
+    total_charges = 0
+
+    print(f"Démarrage de la synchronisation sur {len(deps)} département(s)...")
+    for index, dep in enumerate(deps, start=1):
+        try:
+            offres = client.search_all_offres(
+                mots_cles=mots_cles,
+                code_rome=code_rome,
+                departement=dep,
+                max_results=max_per_departement,
+            )
+            nb = load_offres(offres) if offres else 0
+            total_charges += nb
+            print(
+                f"[{index:03d}/{len(deps):03d}] Dépt {dep:3s} : "
+                f"{len(offres):4d} trouvée(s) -> {nb:4d} chargée(s) (Cumul: {total_charges})"
+            )
+        except Exception as err:
+            logger.warning("Erreur département %s : %s", dep, err)
+            print(f"[{index:03d}/{len(deps):03d}] Dépt {dep:3s} : Erreur ({err})")
+
+    return total_charges
+

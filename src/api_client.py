@@ -8,12 +8,19 @@ dur dans ce module.
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_URL = (
     "https://entreprise.francetravail.fr/connexion/oauth2/access_token"
@@ -21,6 +28,7 @@ DEFAULT_TOKEN_URL = (
 )
 DEFAULT_API_BASE_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2"
 DEFAULT_SCOPE = "api_offresdemploiv2 o2dsoffre"
+
 
 
 class FranceTravailAuthError(RuntimeError):
@@ -103,11 +111,13 @@ class FranceTravailClient:
         mots_cles: str | None = None,
         code_rome: str | None = None,
         commune: str | None = None,
+        departement: str | None = None,
         range_: str = "0-49",
     ) -> dict[str, Any]:
         """Recherche des offres d'emploi via l'endpoint /offres/search.
 
-        Retourne le JSON décodé de la réponse (clé "resultats" attendue).
+        Retourne le JSON décodé de la réponse (clé "resultats" attendue)
+        ainsi que le "total" d'offres déduit du header Content-Range si présent.
         """
         params: dict[str, str] = {"range": range_}
         if mots_cles:
@@ -116,6 +126,8 @@ class FranceTravailClient:
             params["codeROME"] = code_rome
         if commune:
             params["commune"] = commune
+        if departement:
+            params["departement"] = departement
 
         response = requests.get(
             f"{self.api_base_url}/offres/search",
@@ -123,14 +135,71 @@ class FranceTravailClient:
             headers={"Authorization": f"Bearer {self._get_token()}"},
             timeout=30,
         )
+        if response.status_code in (204, 416) or not response.content:
+            return {"resultats": [], "total": 0}
+
         if response.status_code not in (200, 206):
             raise FranceTravailApiError(
                 f"Échec de la recherche d'offres "
                 f"(HTTP {response.status_code}) : {response.text[:300]}"
             )
-        if response.status_code == 204 or not response.content:
-            return {"resultats": []}
-        return response.json()
+
+        payload = response.json()
+        content_range = response.headers.get("Content-Range", "")
+        match = re.search(r"/(\d+)$", content_range)
+        if match:
+            payload["total"] = int(match.group(1))
+        return payload
+
+    def search_all_offres(
+        self,
+        mots_cles: str | None = None,
+        code_rome: str | None = None,
+        commune: str | None = None,
+        departement: str | None = None,
+        max_results: int | None = None,
+        delay_seconds: float = 0.25,
+    ) -> list[dict[str, Any]]:
+        """Parcourt automatiquement les pages d'une recherche par tranche de 150.
+
+        S'arrête au plafond de 1149 offres de France Travail (ou à max_results).
+        """
+        offres: list[dict[str, Any]] = []
+        start = 0
+        batch_step = 149
+
+        while start <= 1000:
+            if max_results and len(offres) >= max_results:
+                break
+
+            remaining = (max_results - len(offres) - 1) if max_results else batch_step
+            step = min(batch_step, max(0, remaining))
+            end = min(1148, start + step)
+            range_str = f"{start}-{end}"
+
+            payload = self.search_offres(
+                mots_cles=mots_cles,
+                code_rome=code_rome,
+                commune=commune,
+                departement=departement,
+                range_=range_str,
+            )
+            lot = payload.get("resultats", [])
+            if not lot:
+                break
+
+            offres.extend(lot)
+
+            # Si le lot reçu est inférieur à la taille de tranche demandée, on a atteint la fin
+            if len(lot) < (end - start + 1):
+                break
+
+            start = end + 1
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+
+        return offres
+
 
     def get_offre(self, offre_id: str) -> dict[str, Any]:
         """Récupère une offre unique via l'endpoint /offres/{id}."""

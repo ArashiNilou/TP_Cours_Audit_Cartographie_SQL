@@ -85,13 +85,25 @@ def parse_salaire_annuel(libelle: str | None) -> float | None:
 
 
 def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
+    """Construit la ligne `commune` à partir du bloc `lieuTravail` de l'offre.
+
+    Retourne None si aucun code INSEE n'est fourni : l'offre sera alors
+    rejetée par `load_offres` (le rattachement géographique est obligatoire).
+    """
     lieu = offre_json.get("lieuTravail") or {}
     code_insee = lieu.get("commune")
     if not code_insee:
         return None
+    # Repli sur un code postal par défaut lorsque l'API ne le fournit pas.
+    # Les codes INSEE corses (2A/2B) ne sont pas numériques : dans ce cas,
+    # on utilise un code postal neutre plutôt qu'une valeur qui violerait
+    # la contrainte CHECK ck_commune_code_postal_format (chiffres uniquement).
+    code_postal_repli = (
+        code_insee[:2] + "000" if code_insee[:2].isdigit() else "00000"
+    )
     return {
         "code_insee": code_insee,
-        "code_postal": lieu.get("codePostal") or code_insee[:2] + "000",
+        "code_postal": lieu.get("codePostal") or code_postal_repli,
         "nom_commune": lieu.get("libelle") or code_insee,
         "latitude": lieu.get("latitude"),
         "longitude": lieu.get("longitude"),
@@ -99,6 +111,7 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
+    """Construit la ligne `entreprise`, en marquant l'anonymat si le nom est absent."""
     entreprise = offre_json.get("entreprise") or {}
     nom = entreprise.get("nom")
     return {
@@ -108,6 +121,7 @@ def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_competences(offre_json: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalise le tableau `competences[]` de l'offre en statuts E/S exploitables."""
     competences = []
     for item in offre_json.get("competences") or []:
         libelle = (item.get("libelle") or "").strip()
@@ -145,6 +159,7 @@ def transform_offre(offre_json: dict[str, Any]) -> dict[str, Any]:
 
 
 def _upsert_commune(cur: psycopg.Cursor, commune: dict[str, Any]) -> None:
+    """Insère ou met à jour une commune (référentiel INSEE/BAN) par code_insee."""
     cur.execute(
         """
         INSERT INTO commune (code_insee, code_postal, nom_commune, latitude, longitude)
@@ -160,6 +175,14 @@ def _upsert_commune(cur: psycopg.Cursor, commune: dict[str, Any]) -> None:
 
 
 def _upsert_entreprise(cur: psycopg.Cursor, entreprise: dict[str, Any]) -> int:
+    """Résout l'entreprise_id, en créant l'entreprise si elle est inconnue.
+
+    Chaque entreprise anonyme donne lieu à une nouvelle ligne (aucune notion
+    d'identité à dédupliquer). Pour une entreprise nommée, la déduplication
+    se fait par égalité stricte de `raison_sociale` : deux libellés différant
+    par la casse ou des espaces créeront deux entreprises distinctes (limite
+    acceptée en l'absence de référentiel SIREN dans le JSON de l'API).
+    """
     if entreprise["entreprise_anonyme"]:
         cur.execute(
             "INSERT INTO entreprise (raison_sociale, entreprise_anonyme) "
@@ -184,6 +207,7 @@ def _upsert_entreprise(cur: psycopg.Cursor, entreprise: dict[str, Any]) -> int:
 
 
 def _upsert_metier_rome(cur: psycopg.Cursor, offre: dict[str, Any]) -> None:
+    """Insère ou met à jour la fiche métier ROME associée à l'offre."""
     cur.execute(
         """
         INSERT INTO metier_rome (rome_code, libelle_fiche_metier, domaine_professionnel)
@@ -197,6 +221,11 @@ def _upsert_metier_rome(cur: psycopg.Cursor, offre: dict[str, Any]) -> None:
 
 
 def _upsert_competence(cur: psycopg.Cursor, libelle: str) -> int:
+    """Résout le competence_id, en créant la compétence si son libellé est inédit.
+
+    Le type est fixé à 'Savoir-faire' par défaut : l'API ne distingue pas
+    explicitement savoir-faire et savoir-être dans le tableau `competences[]`.
+    """
     cur.execute(
         """
         INSERT INTO competence (libelle_competence, type_competence)
@@ -209,8 +238,76 @@ def _upsert_competence(cur: psycopg.Cursor, libelle: str) -> int:
     return cur.fetchone()[0]
 
 
+def _load_single_offre(cur: psycopg.Cursor, offre: dict[str, Any]) -> None:
+    """Insère ou met à jour une offre déjà transformée et ses dépendances.
+
+    Suppose que `offre` a déjà passé les contrôles de complétude de
+    `load_offres` (rome_code, commune, date_publication, type_contrat).
+    """
+    _upsert_commune(cur, offre["commune"])
+    _upsert_metier_rome(cur, offre)
+    entreprise_id = _upsert_entreprise(cur, offre["entreprise"])
+
+    cur.execute(
+        """
+        INSERT INTO offre (
+            source_offre_id, libelle_poste, description, date_publication,
+            type_contrat, duree_travail, salaire_brut_annuel_estime,
+            rome_code, entreprise_id, code_insee
+        ) VALUES (
+            %(source_offre_id)s, %(libelle_poste)s, %(description)s,
+            %(date_publication)s, %(type_contrat)s, %(duree_travail)s,
+            %(salaire_brut_annuel_estime)s, %(rome_code)s,
+            %(entreprise_id)s, %(code_insee)s
+        )
+        ON CONFLICT (source_offre_id) DO UPDATE SET
+            libelle_poste = EXCLUDED.libelle_poste,
+            description = EXCLUDED.description,
+            date_publication = EXCLUDED.date_publication,
+            type_contrat = EXCLUDED.type_contrat,
+            duree_travail = EXCLUDED.duree_travail,
+            salaire_brut_annuel_estime = EXCLUDED.salaire_brut_annuel_estime,
+            rome_code = EXCLUDED.rome_code,
+            entreprise_id = EXCLUDED.entreprise_id,
+            code_insee = EXCLUDED.code_insee
+        RETURNING offre_id;
+        """,
+        {
+            "source_offre_id": offre["source_offre_id"],
+            "libelle_poste": offre["libelle_poste"],
+            "description": offre["description"],
+            "date_publication": offre["date_publication"],
+            "type_contrat": offre["type_contrat"],
+            "duree_travail": offre["duree_travail"],
+            "salaire_brut_annuel_estime": offre["salaire_brut_annuel_estime"],
+            "rome_code": offre["rome_code"],
+            "entreprise_id": entreprise_id,
+            "code_insee": offre["commune"]["code_insee"],
+        },
+    )
+    offre_id = cur.fetchone()[0]
+
+    cur.execute("DELETE FROM exigence_offre WHERE offre_id = %s;", (offre_id,))
+    for competence in offre["competences"]:
+        competence_id = _upsert_competence(cur, competence["libelle"])
+        cur.execute(
+            """
+            INSERT INTO exigence_offre (offre_id, competence_id, statut_exigence)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (offre_id, competence_id) DO UPDATE SET
+                statut_exigence = EXCLUDED.statut_exigence;
+            """,
+            (offre_id, competence_id, competence["statut_exigence"]),
+        )
+
+
 def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
     """Charge une collection d'offres JSON dans le schéma 3NF PostgreSQL.
+
+    Chaque offre est isolée dans un SAVEPOINT : une erreur inattendue (par
+    exemple une violation de contrainte non détectée par le filtre de
+    complétude ci-dessous) ne fait rollback que de cette offre et n'annule
+    pas les offres déjà traitées dans le même lot.
 
     Retourne le nombre d'offres effectivement insérées ou mises à jour.
     """
@@ -231,65 +328,21 @@ def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
                     # (code ROME, commune, date ou type de contrat invalides).
                     continue
 
-                _upsert_commune(cur, offre["commune"])
-                _upsert_metier_rome(cur, offre)
-                entreprise_id = _upsert_entreprise(cur, offre["entreprise"])
-
-                cur.execute(
-                    """
-                    INSERT INTO offre (
-                        source_offre_id, libelle_poste, description, date_publication,
-                        type_contrat, duree_travail, salaire_brut_annuel_estime,
-                        rome_code, entreprise_id, code_insee
-                    ) VALUES (
-                        %(source_offre_id)s, %(libelle_poste)s, %(description)s,
-                        %(date_publication)s, %(type_contrat)s, %(duree_travail)s,
-                        %(salaire_brut_annuel_estime)s, %(rome_code)s,
-                        %(entreprise_id)s, %(code_insee)s
+                cur.execute("SAVEPOINT offre_courante;")
+                try:
+                    _load_single_offre(cur, offre)
+                except psycopg.Error as exc:
+                    # Une offre non conforme à une contrainte imprévue ne doit
+                    # pas faire échouer tout le lot : on l'ignore et on log.
+                    cur.execute("ROLLBACK TO SAVEPOINT offre_courante;")
+                    print(
+                        f"Offre {offre['source_offre_id']} ignorée "
+                        f"(erreur base de données) : {exc}"
                     )
-                    ON CONFLICT (source_offre_id) DO UPDATE SET
-                        libelle_poste = EXCLUDED.libelle_poste,
-                        description = EXCLUDED.description,
-                        date_publication = EXCLUDED.date_publication,
-                        type_contrat = EXCLUDED.type_contrat,
-                        duree_travail = EXCLUDED.duree_travail,
-                        salaire_brut_annuel_estime = EXCLUDED.salaire_brut_annuel_estime,
-                        rome_code = EXCLUDED.rome_code,
-                        entreprise_id = EXCLUDED.entreprise_id,
-                        code_insee = EXCLUDED.code_insee
-                    RETURNING offre_id;
-                    """,
-                    {
-                        "source_offre_id": offre["source_offre_id"],
-                        "libelle_poste": offre["libelle_poste"],
-                        "description": offre["description"],
-                        "date_publication": offre["date_publication"],
-                        "type_contrat": offre["type_contrat"],
-                        "duree_travail": offre["duree_travail"],
-                        "salaire_brut_annuel_estime": offre["salaire_brut_annuel_estime"],
-                        "rome_code": offre["rome_code"],
-                        "entreprise_id": entreprise_id,
-                        "code_insee": offre["commune"]["code_insee"],
-                    },
-                )
-                offre_id = cur.fetchone()[0]
-
-                cur.execute(
-                    "DELETE FROM exigence_offre WHERE offre_id = %s;", (offre_id,)
-                )
-                for competence in offre["competences"]:
-                    competence_id = _upsert_competence(cur, competence["libelle"])
-                    cur.execute(
-                        """
-                        INSERT INTO exigence_offre (offre_id, competence_id, statut_exigence)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (offre_id, competence_id) DO UPDATE SET
-                            statut_exigence = EXCLUDED.statut_exigence;
-                        """,
-                        (offre_id, competence_id, competence["statut_exigence"]),
-                    )
-
-                nombre_traitees += 1
+                    continue
+                else:
+                    cur.execute("RELEASE SAVEPOINT offre_courante;")
+                    nombre_traitees += 1
 
         connection.commit()
     return nombre_traitees

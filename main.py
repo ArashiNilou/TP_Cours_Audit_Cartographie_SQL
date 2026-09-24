@@ -11,6 +11,7 @@ import argparse
 
 from dotenv import load_dotenv
 
+from src.api_client import FranceTravailApiError, FranceTravailAuthError
 from src.connection import get_connection
 from src.ingest import sync_from_api
 from src.schema import initialize_database
@@ -67,12 +68,19 @@ def main() -> None:
         initialize_database()
         print("Base initialisée : schéma recréé et données de test chargées.")
     elif args.sync_api:
-        nombre = sync_from_api(
-            mots_cles=args.mots_cles,
-            code_rome=args.code_rome,
-            commune=args.commune,
-            range_=args.range_,
-        )
+        try:
+            nombre = sync_from_api(
+                mots_cles=args.mots_cles,
+                code_rome=args.code_rome,
+                commune=args.commune,
+                range_=args.range_,
+            )
+        except (FranceTravailAuthError, FranceTravailApiError) as exc:
+            # Erreur attendue et documentée (identifiants invalides, quota
+            # dépassé, endpoint inaccessible...) : message clair sans
+            # traceback brut pour un usage en ligne de commande.
+            print(f"Échec de la synchronisation avec l'API France Travail : {exc}")
+            raise SystemExit(1) from exc
         print(f"Synchronisation terminée : {nombre} offre(s) chargée(s) en base.")
     else:
         check_connection()

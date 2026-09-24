@@ -65,29 +65,39 @@ bassin d'emploi ?
 * Livrer un script DDL PostgreSQL complet, avec contraintes, index, données
   de test et requêtes d'analyse orientées tableau de bord RH.
 
-## 2. Sources de données réelles
+## 2. Source de données réelle
 
 | Nom | Organisation | URL | Format | Nature | Description métier |
 |---|---|---|---|---|---|
-| API « Offres d'emploi v2 » | France Travail | <https://francetravail.io/produits-partages/catalogue/offres-emploi> | JSON | Semi-structurée, objets imbriqués | Flux d'offres d'emploi avec objets imbriqués `lieuTravail`, `entreprise`, tableau `competences[]` et bloc `salaire` en texte libre. Constitue la table de faits du modèle. |
-| Référentiel ROME 4.0 | France Travail (Open Data data.gouv.fr) | <https://www.data.gouv.fr/fr/datasets/repertoire-operationnel-des-metiers-et-des-emplois-rome/> | CSV | Structurée | Arborescence des domaines professionnels, fiches métiers et codes ROME associés. Sert de référentiel stable pour classer chaque offre par métier. |
-| Base Adresse Nationale (BAN) / référentiel des communes INSEE | Institut national de l'information géographique (IGN) et INSEE (Open Data data.gouv.fr) | <https://www.data.gouv.fr/fr/datasets/base-adresse-nationale/> | CSV | Structurée | Codes INSEE, codes postaux, libellés de communes et coordonnées GPS, permettant de rattacher chaque offre à un bassin d'emploi identifié de manière stable. |
+| API « Offres d'emploi v2 » | France Travail | <https://francetravail.io/produits-partages/catalogue/offres-emploi> | JSON | Semi-structurée, objets imbriqués | Flux d'offres d'emploi avec objets imbriqués `lieuTravail` (commune, code postal, coordonnées GPS), `entreprise`, code et libellé ROME, tableau `competences[]` et bloc `salaire` en texte libre. Source unique et suffisante pour alimenter l'ensemble du schéma 3NF : chaque offre embarque déjà, sous forme dénormalisée, les référentiels métier (ROME) et géographique (commune) nécessaires à son propre classement. |
 
-### Points d'audit spécifiques à chaque source
+Le cahier des charges initial envisageait de croiser cette API avec deux
+référentiels externes distincts (ROME 4.0 et Base Adresse Nationale/INSEE
+au format CSV, publiés sur data.gouv.fr) afin de fiabiliser respectivement
+le classement métier et le rattachement géographique. Dans l'implémentation
+réelle (`src/ingest.py`), ce croisement s'est avéré inutile : l'API renvoie
+déjà, pour chaque offre, un code et un libellé ROME (`romeCode`,
+`romeLibelle`) ainsi qu'un code INSEE de commune (`lieuTravail.commune`)
+directement exploitables. Les tables `metier_rome` et `commune` sont donc
+alimentées par extraction et dédoublonnage depuis ce flux unique, et non
+par le chargement d'un fichier CSV externe.
 
-* **API Offres d'emploi** : les objets `entreprise`, `salaire` et
-  `lieuTravail` sont parfois absents ou partiellement renseignés ; le champ
-  salaire est un texte libre nécessitant un parsing par expression régulière
-  pour en extraire une valeur numérique exploitable ; le tableau
-  `competences[]` peut être vide, contenir des doublons ou mélanger
-  savoir-faire et savoir-être sans distinction explicite.
-* **Référentiel ROME 4.0** : certains codes ROME publiés dans les offres
-  peuvent être absents du millésime du référentiel téléchargé ; un contrôle
-  de rapprochement est nécessaire avant tout chargement.
-* **BAN / référentiel INSEE** : les codes postaux ne sont pas des
-  identifiants stables de commune (plusieurs codes postaux par commune ou
-  inversement) ; seul le code INSEE est retenu comme clé de rattachement
-  géographique fiable dans le modèle.
+### Points d'audit de la source
+
+* Les objets `entreprise`, `salaire` et `lieuTravail` sont parfois absents
+  ou partiellement renseignés.
+* Le champ salaire est un texte libre nécessitant un parsing par expression
+  régulière pour en extraire une valeur numérique exploitable
+  (`parse_salaire_annuel` dans `src/ingest.py`).
+* Le tableau `competences[]` peut être vide, contenir des doublons, ou
+  mélanger savoir-faire et savoir-être sans distinction explicite.
+* Le code postal fourni par `lieuTravail` n'est pas toujours un identifiant
+  stable de commune (plusieurs codes postaux par commune ou inversement) :
+  seul le code INSEE est retenu comme clé de rattachement géographique
+  fiable dans le modèle (`commune.code_insee`).
+* Le libellé de domaine professionnel n'étant pas fourni tel quel par
+  l'API, il est déduit de la première lettre du code ROME selon la
+  nomenclature officielle des 14 grands domaines (`resolve_domaine_professionnel`).
 
 ## 3. Dictionnaire de données
 
@@ -149,10 +159,10 @@ bassin d'emploi ?
   entreprise non anonyme possède obligatoirement une raison sociale, et
   qu'une entreprise anonyme peut légitimement avoir une raison sociale
   absente.
-* **Communes sans coordonnées GPS** : certaines communes du référentiel BAN
-  ne disposent pas systématiquement de coordonnées précises ; `latitude` et
-  `longitude` restent donc nullables, sans remettre en cause l'usage du code
-  INSEE comme identifiant géographique principal.
+* **Communes sans coordonnées GPS** : le bloc `lieuTravail` de l'API ne
+  fournit pas systématiquement de coordonnées précises pour chaque commune ;
+  `latitude` et `longitude` restent donc nullables, sans remettre en cause
+  l'usage du code INSEE comme identifiant géographique principal.
 
 ## 5. Modélisation conceptuelle et logique
 
@@ -338,16 +348,17 @@ ORDER BY nombre_offres DESC, salaire_moyen_estime DESC;
 ## 7. Cartographie globale du pipeline de données
 
 ```text
-API France Travail (JSON) --------------+
-                                          +--> Zone brute immuable, horodatée
-Référentiel ROME 4.0 (CSV) --------------+
-Base Adresse Nationale / INSEE (CSV) ----+
+API France Travail (JSON, offres avec ROME et commune imbriqués)
+                                                    |
+                                                    v
+                         Zone brute (réponses JSON horodatées)
                                                     |
                                                     v
                         Audit qualité et nettoyage (data wrangling)
     (aplatissement du tableau competences[], parsing regex du salaire
      en texte libre, dédoublonnage des compétences, traitement explicite
-     des entreprises anonymes, rapprochement des codes ROME et INSEE)
+     des entreprises anonymes, extraction du code ROME et du code INSEE
+     directement depuis le JSON de chaque offre)
                                                     |
                                                     v
                     Normalisation et structuration en 3NF
@@ -366,11 +377,12 @@ Base Adresse Nationale / INSEE (CSV) ----+
 ### Détail des quatre étapes
 
 1. **Extraction** : interroger périodiquement l'API « Offres d'emploi v2 »
-   de France Travail (authentification OAuth2), et télécharger les
-   millésimes du référentiel ROME 4.0 et de la Base Adresse Nationale /
-   référentiel INSEE. Les réponses JSON et les fichiers CSV bruts sont
-   conservés tels quels, avec horodatage de collecte, dans une zone de
-   stockage brute non modifiée.
+   de France Travail (authentification OAuth2). Chaque offre embarque déjà,
+   sous forme imbriquée, son code et libellé ROME ainsi que sa commune de
+   rattachement : aucun référentiel externe supplémentaire n'est nécessaire.
+   Les réponses JSON brutes sont conservées telles quelles, avec horodatage
+   de collecte, avant toute transformation (voir `scripts/inspect_offre.py`
+   pour l'inspection manuelle d'une offre brute).
 
 2. **Audit et nettoyage (data wrangling)** : profiler la présence ou
    l'absence des objets imbriqués (`entreprise`, `lieuTravail`, `salaire`) ;
@@ -380,9 +392,10 @@ Base Adresse Nationale / INSEE (CSV) ----+
    Euros` devient une valeur médiane estimée) ; dédupliquer les libellés de
    compétences afin d'éviter la création de doublons dans le référentiel ;
    traiter explicitement le cas des entreprises anonymes en distinguant
-   absence de nom et confidentialité volontaire ; rapprocher chaque code
-   ROME et chaque code INSEE présent dans les offres avec les référentiels
-   téléchargés, et journaliser les rejets en cas d'absence de correspondance.
+   absence de nom et confidentialité volontaire ; rejeter et journaliser
+   toute offre dont le code ROME, la commune, la date de publication ou le
+   type de contrat sont manquants ou non conformes aux contraintes du
+   schéma.
 
 3. **Normalisation et structuration** : construire les tables de
    référentiel (`commune`, `entreprise`, `metier_rome`, `competence`)

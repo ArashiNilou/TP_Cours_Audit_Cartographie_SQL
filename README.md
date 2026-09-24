@@ -18,12 +18,16 @@ TP_Cours_Audit_Cartographie_SQL/
 │   ├── schema.py             # Exécution des scripts SQL depuis Python
 │   ├── api_client.py         # Client OAuth2 pour l'API France Travail (offres v2)
 │   └── ingest.py             # Transformation JSON API -> lignes 3NF + chargement
+├── scripts/
+│   ├── inspect_offre.py      # Utilitaire dev : dump JSON brut d'une offre (scripts/output/)
+│   └── output/               # Artefacts JSON récupérés localement (non versionnés)
 └── main.py                   # Point d'entrée : connexion / --init / --sync-api
 ```
 
 Chaque couche a une responsabilité unique : `docs/` porte la modélisation
 visuelle, `sql/` porte la définition des données en trois scripts numérotés
-et rejouables indépendamment, `src/` porte la logique d'accès à la base, et
+et rejouables indépendamment, `src/` porte la logique d'accès à la base et
+à l'API, `scripts/` regroupe les utilitaires de développement ponctuels, et
 `main.py` reste un point d'entrée fin, sans logique métier.
 
 ## 1. Sujet et problématique métier
@@ -460,3 +464,13 @@ publication ou type de contrat manquants/invalides) sont écartées et
 journalisées via `logging`, conformément à l'étape d'audit qualité du
 pipeline décrite en section 7.
 
+### 5. Inspecter une offre brute (optionnel, développement)
+
+Pour explorer la structure JSON exacte renvoyée par l'API avant d'étendre
+`src/ingest.py`, `scripts/inspect_offre.py` réutilise `FranceTravailClient`
+et sauvegarde une offre dans `scripts/output/` (dossier ignoré par git) :
+
+```bash
+python scripts/inspect_offre.py               # première offre trouvée (motsCles="data")
+python scripts/inspect_offre.py 214JMGC       # offre précise par identifiant
+```

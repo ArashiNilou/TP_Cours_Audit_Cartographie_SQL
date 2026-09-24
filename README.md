@@ -1,5 +1,29 @@
 # TP - Audit, cartographie et modélisation de données : tensions sur les compétences numériques
 
+## Architecture du projet
+
+```text
+TP_Cours_Audit_Cartographie_SQL/
+├── README.md                 # Dossier complet du TP (ce fichier)
+├── requirements.txt          # Dépendances Python (pilote PostgreSQL)
+├── .env.example              # Modèle des variables de connexion (sans secret)
+├── docs/
+│   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
+├── sql/
+│   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index
+│   ├── 02_seed.sql           # Jeu de données de test cohérent
+│   └── 03_queries.sql        # Requêtes d'analyse (tableau de bord RH)
+├── src/
+│   ├── connection.py         # Connexion PostgreSQL par variables d'environnement
+│   └── schema.py             # Exécution des scripts SQL depuis Python
+└── main.py                   # Point d'entrée : test de connexion / --init
+```
+
+Chaque couche a une responsabilité unique : `docs/` porte la modélisation
+visuelle, `sql/` porte la définition des données en trois scripts numérotés
+et rejouables indépendamment, `src/` porte la logique d'accès à la base, et
+`main.py` reste un point d'entrée fin, sans logique métier.
+
 ## 1. Sujet et problématique métier
 
 ### Domaine
@@ -173,7 +197,7 @@ plusieurs-à-plusieurs est résolue par `EXIGENCE_OFFRE`.
 ### Code DBML
 
 Le fichier complet et directement importable dans dbdiagram.io est disponible
-dans [`model.dbml`](model.dbml).
+dans [`docs/model.dbml`](docs/model.dbml).
 
 ```dbml
 Table commune {
@@ -252,25 +276,14 @@ Ref: exigence_offre.competence_id > competence.competence_id
 
 ## 6. Script d'implémentation PostgreSQL
 
-Le script complet, commenté et exécutable est disponible dans
-[`sql/emploi_postgresql.sql`](sql/emploi_postgresql.sql). Il comprend, dans
-l'ordre :
+Le script est découpé en trois fichiers numérotés et rejouables dans l'ordre,
+disponibles dans le dossier [`sql/`](sql) :
 
-1. Les instructions `DROP TABLE IF EXISTS ... CASCADE` dans l'ordre inverse
-   des dépendances.
-2. La création des six tables avec types stricts (`BIGINT` en identité,
-   `VARCHAR`, `NUMERIC`, `DATE`, `BOOLEAN`, `CHAR`), les clés primaires, les
-   clés étrangères avec `ON DELETE RESTRICT/CASCADE` et `ON UPDATE CASCADE`,
-   ainsi que des contraintes `CHECK` de validation (format du code INSEE,
-   type de contrat autorisé, salaire positif, cohérence de l'anonymat des
-   entreprises).
-3. Huit index B-Tree ciblant les colonnes de jointure et de filtrage les
-   plus fréquentes (code ROME, type de contrat, code INSEE, date de
-   publication, couple commune/contrat, compétence).
-4. Un jeu de données de test cohérent : deux communes, deux entreprises
-   (dont une anonyme), deux fiches ROME, quatre compétences, trois offres et
-   leurs liaisons de compétences avec statut d'exigence.
-5. Deux requêtes SQL avancées orientées tableau de bord RH.
+| Fichier | Rôle |
+|---|---|
+| [`sql/01_schema.sql`](sql/01_schema.sql) | `DROP TABLE IF EXISTS ... CASCADE` dans l'ordre inverse des dépendances, puis création des six tables avec types stricts (`BIGINT` en identité, `VARCHAR`, `NUMERIC`, `DATE`, `BOOLEAN`, `CHAR`), clés primaires, clés étrangères avec `ON DELETE RESTRICT/CASCADE` et `ON UPDATE CASCADE`, contraintes `CHECK` de validation (format du code INSEE, type de contrat autorisé, salaire positif, cohérence de l'anonymat des entreprises), et huit index B-Tree ciblant les colonnes de jointure et de filtrage les plus fréquentes. |
+| [`sql/02_seed.sql`](sql/02_seed.sql) | Jeu de données de test cohérent : deux communes, deux entreprises (dont une anonyme), deux fiches ROME, quatre compétences, trois offres et leurs liaisons de compétences avec statut d'exigence. |
+| [`sql/03_queries.sql`](sql/03_queries.sql) | Deux requêtes SQL avancées orientées tableau de bord RH. |
 
 ### Aperçu des requêtes d'analyse
 
@@ -384,25 +397,29 @@ Base Adresse Nationale / INSEE (CSV) ----+
 
 ## Exécution
 
-Depuis une base PostgreSQL de test nommée `emploi` :
+### Avec le client `psql`
+
+Depuis une base PostgreSQL de test nommée `emploi`, exécuter les trois
+scripts dans l'ordre :
 
 ```bash
-psql -d emploi -f sql/emploi_postgresql.sql
+psql -d emploi -f sql/01_schema.sql
+psql -d emploi -f sql/02_seed.sql
+psql -d emploi -f sql/03_queries.sql
 ```
 
-Le script ne dépend d'aucune extension PostgreSQL et peut être rejoué grâce
-aux instructions `DROP TABLE IF EXISTS ... CASCADE`.
+Chaque script est autonome et rejouable grâce aux instructions
+`DROP TABLE IF EXISTS ... CASCADE` du premier fichier.
 
-### Connexion depuis Python / PyCharm
+### Avec le point d'entrée Python (`main.py`)
 
-La base créée dans pgAdmin doit être accessible sur le serveur PostgreSQL
-correspondant. Installer le pilote dans l'environnement virtuel :
+Installer le pilote PostgreSQL dans l'environnement virtuel :
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-Configurer ensuite les variables de connexion à partir de `.env.example`.
+Configurer les variables de connexion à partir de `.env.example`.
 PowerShell permet par exemple de les définir pour la session courante :
 
 ```powershell
@@ -411,9 +428,13 @@ $env:PGPORT = "5432"
 $env:PGDATABASE = "emploi"
 $env:PGUSER = "postgres"
 $env:PGPASSWORD = "votre_mot_de_passe"
+
+# Vérifie uniquement la connexion à la base :
 python main.py
+
+# Recrée le schéma (sql/01_schema.sql) et charge le jeu de données
+# de test (sql/02_seed.sql) :
+python main.py --init
 ```
 
-Le mot de passe reste local et n'est pas écrit dans le dépôt. Le script
-vérifie la connexion en affichant la base et l'utilisateur PostgreSQL
-effectivement connectés.
+Le mot de passe reste local et n'est jamais écrit dans le dépôt.

@@ -117,12 +117,12 @@ par le chargement d'un fichier CSV externe.
 | `duree_travail` | Régime horaire déclaré | `varchar(100)` | `35H Horaires normaux` | Nullable |
 | `salaire_brut_annuel_estime` | Salaire brut annuel estimé, extrait du texte libre par parsing | `numeric(10,2)` | `41500.00` | Nullable, CHECK >= 0 |
 | `entreprise_id` | Référence à l'entreprise recruteuse | `bigint` | `1` | FK vers `entreprise`, NOT NULL |
-| `raison_sociale` | Nom de l'entreprise recruteuse | `varchar(150)` | `TECH INNOVATION` | Nullable si `entreprise_anonyme = true` ; NOT NULL sinon (règle métier appliquée par `CHECK`) |
+| `raison_sociale` | Nom de l'entreprise recruteuse | `varchar(250)` | `TECH INNOVATION` | Nullable si `entreprise_anonyme = true` ; NOT NULL sinon (règle métier appliquée par `CHECK`) |
 | `entreprise_anonyme` | Indique si l'entreprise a choisi de rester anonyme dans l'offre | `boolean` | `false` | NOT NULL, défaut `false` |
 | `rome_code` | Code du métier ROME associé à l'offre | `varchar(5)` | `M1805` | FK vers `metier_rome`, NOT NULL |
-| `libelle_fiche_metier` | Libellé de la fiche métier ROME | `varchar(150)` | `Études et développement informatique` | NOT NULL |
+| `libelle_fiche_metier` | Libellé de la fiche métier ROME | `varchar(250)` | `Études et développement informatique` | NOT NULL |
 | `domaine_professionnel` | Domaine professionnel de rattachement du métier | `varchar(150)` | `Systèmes d'information et télécommunications` | NOT NULL |
-| `libelle_competence` | Libellé de la compétence technique ou comportementale | `varchar(150)` | `Langage SQL` | NOT NULL, UNIQUE |
+| `libelle_competence` | Libellé de la compétence technique ou comportementale | `varchar(300)` | `Langage SQL` | NOT NULL, UNIQUE |
 | `type_competence` | Nature de la compétence | `varchar(20)` | `Savoir-faire` | NOT NULL, CHECK IN ('Savoir-faire', 'Savoir-être') |
 | `statut_exigence` | Caractère exigé ou souhaité d'une compétence pour une offre donnée | `varchar(1)` | `E` | NOT NULL, CHECK IN ('E', 'S') |
 | `code_insee` | Code officiel INSEE de la commune | `char(5)` | `44172` | PK de `commune`, FK dans `offre`, NOT NULL |
@@ -473,12 +473,13 @@ Pour réinitialiser complètement la base Docker depuis zéro :
 docker compose down -v && docker compose up -d
 ```
 
-#### Option B : Avec Python (base locale existante)
+#### Option B : Avec Python (base locale ou conteneur Docker)
 
 ```bash
-python main.py            # vérifie uniquement la connexion à la base
+python main.py            # affiche l'état de connexion, la volumétrie des 6 tables
+                          # et un aperçu des dernières offres enregistrées en base
 python main.py --init     # recrée le schéma (sql/01_schema.sql)
-                           # et charge le jeu de données de test (sql/02_seed.sql)
+                          # et charge le jeu de données de test (sql/02_seed.sql)
 ```
 
 #### Option C : Avec le client `psql`
@@ -493,26 +494,25 @@ psql -d emploi -f sql/03_queries.sql
 
 ### 4. Ingérer des offres réelles depuis l'API France Travail
 
-Le module `src/api_client.py` gère l'authentification OAuth2
-(flux `client_credentials`) et `src/ingest.py` transforme les offres JSON
-reçues en lignes conformes au schéma 3NF (parsing du salaire en texte
-libre, gestion de l'anonymat d'entreprise, upsert idempotent des
-référentiels commune/ROME/compétence).
+Le module `src/api_client.py` gère l'authentification OAuth2 (flux `client_credentials`) et `src/ingest.py` transforme les offres JSON reçues en lignes conformes au schéma 3NF (parsing du salaire en texte libre, gestion de l'anonymat d'entreprise, upsert idempotent des référentiels commune/ROME/compétence).
 
-Compléter dans `.env` les variables `FT_*` décrites dans `.env.example`
-(identifiant, secret, endpoint de jeton, scope, URL de l'API), puis lancer
-une synchronisation avec des filtres optionnels :
+Compléter dans `.env` les variables `FT_*` décrites dans `.env.example` (identifiant, secret, endpoint de jeton, scope, URL de l'API), puis lancer l'ingestion :
 
 ```bash
+# 1. Recherche ciblée sur une tranche (par défaut 0-49)
 python main.py --sync-api --mots-cles "data engineer" --code-rome M1805 --commune 44172
+
+# 2. Recherche ciblée avec pagination automatique (jusqu'à 1 149 offres max)
+python main.py --sync-api --mots-cles "data analyst" --departement 75 --paginate
+
+# 3. Collecte globale sur l'ensemble des 101 départements français
+python main.py --sync-all
+
+# 4. Collecte globale filtrée par mots-clés avec limite par département
+python main.py --sync-all --mots-cles "data" --max-per-dep 200
 ```
 
-Chaque exécution est idempotente : les offres déjà connues
-(`source_offre_id`) sont mises à jour plutôt que dupliquées. Les offres non
-conformes aux contraintes du schéma (code ROME, commune, date de
-publication ou type de contrat manquants/invalides) sont écartées et
-journalisées via `logging`, conformément à l'étape d'audit qualité du
-pipeline décrite en section 7.
+Chaque exécution est idempotente : les offres déjà connues (`source_offre_id`) sont mises à jour plutôt que dupliquées (`ON CONFLICT DO UPDATE`). Les offres non conformes aux contraintes du schéma (code ROME, commune, date de publication ou type de contrat manquants/invalides) sont écartées et journalisées via `logging`, conformément à l'étape d'audit qualité du pipeline décrite en section 7.
 
 ### 5. Inspecter une offre brute (optionnel, développement)
 

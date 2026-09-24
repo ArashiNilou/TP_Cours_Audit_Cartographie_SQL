@@ -1,24 +1,33 @@
-"""Exemple minimal : API Offres d'emploi v2 de France Travail.
+"""API Offres d'emploi v2 de France Travail : token + recherche + export CSV.
 
-Usage :
-    pip install requests
-    export FT_CLIENT_ID="ton_identifiant"     # Windows PowerShell : $env:FT_CLIENT_ID="..."
-    export FT_CLIENT_SECRET="ta_cle_secrete"
-    python exemple_offres.py
+Prérequis (dans ton venv) :
+    pip install requests python-dotenv      # ou : uv add requests python-dotenv
+
+Fichier .env à côté du script (sans guillemets, sans espaces autour du "=") :
+    FT_CLIENT_ID=ton_identifiant
+    FT_CLIENT_SECRET=ta_cle_secrete
 """
 import csv
 import os
 import sys
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token"
 SEARCH_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
 
-client_id = os.environ.get("FT_CLIENT_ID")
-client_secret = os.environ.get("FT_CLIENT_SECRET")
+# .strip() enlève espaces, retours à la ligne et guillemets parasites
+client_id = os.environ.get("FT_CLIENT_ID", "").strip().strip("'\"")
+client_secret = os.environ.get("FT_CLIENT_SECRET", "").strip().strip("'\"")
 if not client_id or not client_secret:
-    sys.exit("Définis FT_CLIENT_ID et FT_CLIENT_SECRET dans tes variables d'environnement.")
+    sys.exit("FT_CLIENT_ID / FT_CLIENT_SECRET introuvables : vérifie ton fichier .env.")
+
+# Vérification sans afficher la clé
+print(f"client_id : {client_id[:12]}... ({len(client_id)} caractères)")
+print(f"client_secret : {len(client_secret)} caractères\n")
 
 # 1. Token OAuth2 (client credentials)
 r = requests.post(
@@ -28,12 +37,15 @@ r = requests.post(
         "grant_type": "client_credentials",
         "client_id": client_id,
         "client_secret": client_secret,
-        "scope": "api_offresdemploiv2 o2dsoffre",
+        "scope": f"application_{client_id} api_offresdemploiv2 o2dsoffre",
     },
     timeout=30,
 )
-r.raise_for_status()
+if not r.ok:
+    print("Erreur token :", r.status_code, r.text)
+    sys.exit(1)
 token = r.json()["access_token"]
+print("Token obtenu.\n")
 
 # 2. Recherche (modifie les paramètres à ta guise)
 params = {"motsCles": "data analyst", "departement": "75", "range": "0-149"}
@@ -43,10 +55,11 @@ r = requests.get(
     params=params,
     timeout=30,
 )
-
 if r.status_code == 204:
     sys.exit("Aucune offre trouvée pour ces critères.")
-r.raise_for_status()  # 200 et 206 (résultats partiels/paginés) sont normaux
+if r.status_code not in (200, 206):  # 206 = résultats partiels/paginés, normal
+    print("Erreur recherche :", r.status_code, r.text)
+    sys.exit(1)
 
 offres = r.json().get("resultats", [])
 print(f"{len(offres)} offres récupérées\n")

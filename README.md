@@ -5,7 +5,7 @@
 ```text
 TP_Cours_Audit_Cartographie_SQL/
 ├── README.md                 # Dossier complet du TP (ce fichier)
-├── requirements.txt          # Dépendances Python (pilote PostgreSQL)
+├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
 │   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
@@ -397,12 +397,39 @@ Base Adresse Nationale / INSEE (CSV) ----+
    d'emploi, salaire moyen estimé par type de contrat, et suivi dans le
    temps des tensions de recrutement territoriales.
 
-## Exécution
+## Installation et exécution
 
-### Avec le client `psql`
+### Prérequis
 
-Depuis une base PostgreSQL de test nommée `emploi`, exécuter les trois
-scripts dans l'ordre :
+* PostgreSQL 14 ou supérieur, accessible en local ou à distance.
+* Python 3.11 ou supérieur.
+* Des identifiants applicatifs [francetravail.io](https://francetravail.io)
+  (uniquement nécessaires pour l'ingestion réelle décrite plus bas).
+
+### 1. Installer les dépendances
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 2. Configurer la connexion
+
+Copier `.env.example` en `.env` et renseigner au minimum les variables
+PostgreSQL (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`). Le
+fichier `.env` est ignoré par git : aucun secret n'est jamais committé.
+Il est chargé automatiquement par `main.py`.
+
+### 3. Initialiser le schéma et les données de test
+
+```bash
+python main.py            # vérifie uniquement la connexion à la base
+python main.py --init     # recrée le schéma (sql/01_schema.sql)
+                           # et charge le jeu de données de test (sql/02_seed.sql)
+```
+
+Alternative avec le client `psql`, en exécutant les scripts dans l'ordre
+(chacun est autonome et rejouable grâce aux `DROP TABLE IF EXISTS ... CASCADE`
+du premier fichier) :
 
 ```bash
 psql -d emploi -f sql/01_schema.sql
@@ -410,66 +437,26 @@ psql -d emploi -f sql/02_seed.sql
 psql -d emploi -f sql/03_queries.sql
 ```
 
-Chaque script est autonome et rejouable grâce aux instructions
-`DROP TABLE IF EXISTS ... CASCADE` du premier fichier.
+### 4. Ingérer des offres réelles depuis l'API France Travail
 
-### Avec le point d'entrée Python (`main.py`)
+Le module `src/api_client.py` gère l'authentification OAuth2
+(flux `client_credentials`) et `src/ingest.py` transforme les offres JSON
+reçues en lignes conformes au schéma 3NF (parsing du salaire en texte
+libre, gestion de l'anonymat d'entreprise, upsert idempotent des
+référentiels commune/ROME/compétence).
 
-Installer le pilote PostgreSQL dans l'environnement virtuel :
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-Configurer les variables de connexion à partir de `.env.example`.
-PowerShell permet par exemple de les définir pour la session courante :
-
-```powershell
-$env:PGHOST = "localhost"
-$env:PGPORT = "5432"
-$env:PGDATABASE = "emploi"
-$env:PGUSER = "postgres"
-$env:PGPASSWORD = "votre_mot_de_passe"
-
-# Vérifie uniquement la connexion à la base :
-python main.py
-
-# Recrée le schéma (sql/01_schema.sql) et charge le jeu de données
-# de test (sql/02_seed.sql) :
-python main.py --init
-```
-
-Le mot de passe reste local et n'est jamais écrit dans le dépôt.
-
-### Ingestion réelle depuis l'API France Travail
-
-Le module `src/api_client.py` implémente l'authentification OAuth2
-(flux `client_credentials`) auprès de l'endpoint de jeton France Travail,
-et `src/ingest.py` transforme les offres JSON reçues en lignes conformes
-au schéma 3NF (parsing du salaire en texte libre, gestion de l'anonymat
-d'entreprise, upsert idempotent des référentiels commune/ROME/compétence).
-
-Ajouter dans `.env` les identifiants applicatifs fournis par
-[francetravail.io](https://francetravail.io) (voir `.env.example`) :
-
-```env
-FT_CLIENT_ID=...
-FT_CLIENT_SECRET=...
-FT_TOKEN_URL=https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire
-FT_SCOPE=api_offresdemploiv2 o2dsoffre
-FT_API_BASE_URL=https://api.francetravail.io/partenaire/offresdemploi/v2
-```
-
-Puis lancer une synchronisation, avec filtres optionnels :
+Compléter dans `.env` les variables `FT_*` décrites dans `.env.example`
+(identifiant, secret, endpoint de jeton, scope, URL de l'API), puis lancer
+une synchronisation avec des filtres optionnels :
 
 ```bash
 python main.py --sync-api --mots-cles "data engineer" --code-rome M1805 --commune 44172
 ```
 
 Chaque exécution est idempotente : les offres déjà connues
-(`source_offre_id`) sont mises à jour plutôt que dupliquées, et les
-offres non conformes aux contraintes du schéma (code ROME, commune,
-date de publication ou type de contrat manquants/invalides) sont
-rejetées silencieusement, conformément à l'étape d'audit qualité du
+(`source_offre_id`) sont mises à jour plutôt que dupliquées. Les offres non
+conformes aux contraintes du schéma (code ROME, commune, date de
+publication ou type de contrat manquants/invalides) sont écartées et
+journalisées via `logging`, conformément à l'étape d'audit qualité du
 pipeline décrite en section 7.
 

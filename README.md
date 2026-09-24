@@ -9,6 +9,7 @@ TP_Cours_Audit_Cartographie_SQL/
 ├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
+│   ├── mcd.mmd                # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
 │   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
 ├── sql/
 │   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index
@@ -237,6 +238,10 @@ erDiagram
 `COMPETENCE`) et `0,N` côté entité dépendante, conformément au tableau des
 cardinalités ci-dessus. La notation Mermaid `||--o{` traduit ce couple
 « exactement un » / « zéro ou plusieurs ».*
+
+Ce diagramme est également disponible en fichier autonome dans
+[`docs/mcd.mmd`](docs/mcd.mmd), à coller directement sur
+<https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
 
 ### Modèle Logique des Données
 

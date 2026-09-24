@@ -1,0 +1,40 @@
+%% MCD Merise - domaine Emploi/marche du travail (voir README.md section 5 pour le detail)
+erDiagram
+    COMMUNE ||--o{ OFFRE : "localise"
+    ENTREPRISE ||--o{ OFFRE : "publie"
+    METIER_ROME ||--o{ OFFRE : "categorise"
+    OFFRE ||--o{ EXIGENCE : "porte"
+    COMPETENCE ||--o{ EXIGENCE : "est requise par"
+
+    COMMUNE {
+        string code_insee
+        string code_postal
+        string nom_commune
+        decimal latitude
+        decimal longitude
+    }
+    ENTREPRISE {
+        string raison_sociale
+        boolean entreprise_anonyme
+    }
+    METIER_ROME {
+        string code_rome
+        string libelle_fiche_metier
+        string domaine_professionnel
+    }
+    OFFRE {
+        string source_offre_id
+        string libelle_poste
+        string description
+        date date_publication
+        string type_contrat
+        string duree_travail
+        decimal salaire_brut_annuel_estime
+    }
+    COMPETENCE {
+        string libelle_competence
+        string type_competence
+    }
+    EXIGENCE {
+        string statut_exigence
+    }

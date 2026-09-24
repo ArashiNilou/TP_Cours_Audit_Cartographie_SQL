@@ -24,6 +24,41 @@ _SALAIRE_NOMBRE_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
 # Types de contrat acceptés par la contrainte CHECK ck_offre_type_contrat_valide.
 TYPES_CONTRAT_VALIDES = {"CDI", "CDD", "MIS", "SAI", "CCE"}
 
+# Grands domaines professionnels de la nomenclature ROME 4.0 (France Travail),
+# indexés par la première lettre du code ROME. Utilisé en dernier recours pour
+# alimenter metier_rome.domaine_professionnel lorsque l'API ne fournit pas
+# directement ce libellé : le champ "secteurActiviteLibelle" de l'API décrit
+# le secteur d'activité de l'entreprise recruteuse (NAF), une notion distincte
+# du domaine professionnel du métier, et ne doit donc pas être utilisé ici.
+ROME_GRANDS_DOMAINES: dict[str, str] = {
+    "A": "Arts et façonnage d'ouvrages d'art",
+    "B": "Arts et façonnage d'ouvrages d'art",
+    "C": "Banque, assurance, immobilier",
+    "D": "Commerce, vente et grande distribution",
+    "E": "Communication, média et multimédia",
+    "F": "Construction, bâtiment et travaux publics",
+    "G": "Hôtellerie-restauration, tourisme, loisirs et animation",
+    "H": "Industrie",
+    "I": "Installation et maintenance",
+    "J": "Santé",
+    "K": "Services à la personne et à la collectivité",
+    "L": "Spectacle",
+    "M": "Support à l'entreprise",
+    "N": "Transport et logistique",
+}
+
+
+def resolve_domaine_professionnel(rome_code: str | None) -> str:
+    """Déduit le grand domaine professionnel ROME à partir du code métier.
+
+    Le domaine est déterminé par la première lettre du code ROME (ex. "M1805"
+    -> domaine M "Support à l'entreprise"), conformément à la nomenclature
+    officielle des 14 grands domaines professionnels France Travail.
+    """
+    if not rome_code:
+        return "Non renseigné"
+    return ROME_GRANDS_DOMAINES.get(rome_code[0].upper(), "Non renseigné")
+
 
 def parse_salaire_annuel(libelle: str | None) -> float | None:
     """Extrait un salaire brut annuel estimé à partir d'un texte libre.
@@ -100,8 +135,9 @@ def transform_offre(offre_json: dict[str, Any]) -> dict[str, Any]:
         ),
         "rome_code": offre_json.get("romeCode"),
         "rome_libelle": offre_json.get("romeLibelle") or offre_json.get("romeCode"),
-        "domaine_professionnel": offre_json.get("secteurActiviteLibelle")
-        or "Non renseigné",
+        "domaine_professionnel": resolve_domaine_professionnel(
+            offre_json.get("romeCode")
+        ),
         "commune": _extract_commune(offre_json),
         "entreprise": _extract_entreprise(offre_json),
         "competences": _extract_competences(offre_json),
@@ -152,7 +188,9 @@ def _upsert_metier_rome(cur: psycopg.Cursor, offre: dict[str, Any]) -> None:
         """
         INSERT INTO metier_rome (rome_code, libelle_fiche_metier, domaine_professionnel)
         VALUES (%(rome_code)s, %(rome_libelle)s, %(domaine_professionnel)s)
-        ON CONFLICT (rome_code) DO NOTHING;
+        ON CONFLICT (rome_code) DO UPDATE SET
+            libelle_fiche_metier = EXCLUDED.libelle_fiche_metier,
+            domaine_professionnel = EXCLUDED.domaine_professionnel;
         """,
         offre,
     )

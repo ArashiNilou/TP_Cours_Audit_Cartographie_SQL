@@ -1,0 +1,36 @@
+# --- Environnements Python ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Fichiers Python compilés / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Secrets et configuration locale ---
+.env
+.env.*
+!.env.example
+
+# --- JetBrains / PyCharm ---
+.idea/
+
+# --- Systèmes d'exploitation ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs et fichiers temporaires ---
+*.log
+*.tmp
+*.bak
+
+# --- Exports de bases de données ---
+*.sql.bak
+*.dump

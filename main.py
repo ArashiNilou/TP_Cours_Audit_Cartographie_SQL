@@ -22,12 +22,41 @@ load_dotenv()
 
 
 def check_connection() -> None:
-    """Ouvre une connexion de test et affiche la base et l'utilisateur connectés."""
+    """Ouvre une connexion et affiche l'état et les données réelles stockées en base."""
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT current_database(), current_user;")
             database, user = cursor.fetchone()
-    print(f"Connexion PostgreSQL réussie : base={database}, utilisateur={user}")
+            print(f"Connexion PostgreSQL réussie : base={database}, utilisateur={user}\n")
+
+            # Volumétrie des tables principales
+            tables = ["offre", "entreprise", "commune", "metier_rome", "competence", "exigence_offre"]
+            print("--- Volumétrie des données en base (volume) ---")
+            for t in tables:
+                cursor.execute(f"SELECT count(*) FROM {t};")
+                cnt = cursor.fetchone()[0]
+                print(f"  * {t:15s} : {cnt:7,d} ligne(s)".replace(",", " "))
+
+            # Aperçu des 3 dernières offres réelles
+            cursor.execute("""
+                SELECT o.source_offre_id, o.libelle_poste, o.type_contrat, c.nom_commune,
+                       o.salaire_brut_annuel_estime, e.raison_sociale
+                FROM offre o
+                LEFT JOIN commune c ON c.code_insee = o.code_insee
+                LEFT JOIN entreprise e ON e.entreprise_id = o.entreprise_id
+                ORDER BY o.offre_id DESC
+                LIMIT 3;
+            """)
+            dernieres = cursor.fetchall()
+            if dernieres:
+                print("\n--- Dernières offres enregistrées ---")
+                for src_id, poste, contrat, ville, salaire, ent in dernieres:
+                    sal_str = f"{salaire:,.0f} €/an".replace(",", " ") if salaire else "Non renseigné"
+                    ent_str = ent or "Entreprise confidentielle"
+                    print(f"  [{src_id}] {poste}")
+                    print(f"    -> {contrat} | {ville} | {sal_str} | {ent_str}")
+            print()
+
 
 
 def main() -> None:

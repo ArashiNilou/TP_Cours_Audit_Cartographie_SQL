@@ -304,29 +304,6 @@ Ce diagramme est également disponible en fichier autonome dans
 [`docs/mld.mmd`](docs/mld.mmd), à coller directement sur
 <https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
 
-### Modèle Logique des Données (notation textuelle)
-
-```text
-COMMUNE(code_insee PK, code_postal, nom_commune, latitude, longitude)
-
-ENTREPRISE(entreprise_id PK, raison_sociale, entreprise_anonyme)
-
-METIER_ROME(rome_code PK, libelle_fiche_metier, domaine_professionnel)
-
-COMPETENCE(competence_id PK, libelle_competence UQ, type_competence)
-
-OFFRE(offre_id PK, source_offre_id UQ, libelle_poste, description,
-      date_publication, type_contrat, duree_travail,
-      salaire_brut_annuel_estime,
-      #rome_code FK -> METIER_ROME,
-      #entreprise_id FK -> ENTREPRISE,
-      #code_insee FK -> COMMUNE)
-
-EXIGENCE_OFFRE(#offre_id FK -> OFFRE, #competence_id FK -> COMPETENCE,
-               statut_exigence)
-PK EXIGENCE_OFFRE (offre_id, competence_id)
-```
-
 Convention de lecture : les clés primaires sont indiquées par `PK`, les
 clés étrangères sont préfixées par `#` et fléchées vers la table
 référencée. Le modèle respecte la troisième forme normale : chaque attribut
@@ -334,86 +311,6 @@ non-clé dépend de la totalité de la clé primaire de sa table et d'aucun
 autre attribut, les référentiels (`METIER_ROME`, `COMPETENCE`, `COMMUNE`,
 `ENTREPRISE`) sont séparés de la table de faits `OFFRE`, et la relation
 plusieurs-à-plusieurs est résolue par `EXIGENCE_OFFRE`.
-
-### Code DBML
-
-Le fichier complet et directement importable dans dbdiagram.io est disponible
-dans [`docs/model.dbml`](docs/model.dbml).
-
-```dbml
-Table commune {
-  code_insee char(5) [pk, note: "Code officiel INSEE de la commune"]
-  code_postal varchar(5) [not null]
-  nom_commune varchar(100) [not null]
-  latitude decimal(9,6)
-  longitude decimal(9,6)
-
-  indexes {
-    code_postal
-    nom_commune
-  }
-}
-
-Table entreprise {
-  entreprise_id bigint [pk, increment]
-  raison_sociale varchar(250) [note: "Nullable si entreprise_anonyme = true"]
-  entreprise_anonyme boolean [not null, default: false]
-
-  indexes {
-    raison_sociale
-  }
-}
-
-Table metier_rome {
-  rome_code varchar(5) [pk, note: "Code ROME 4.0, ex. M1805"]
-  libelle_fiche_metier varchar(250) [not null]
-  domaine_professionnel varchar(150) [not null]
-
-  indexes {
-    domaine_professionnel
-  }
-}
-
-Table competence {
-  competence_id bigint [pk, increment]
-  libelle_competence varchar(300) [not null, unique]
-  type_competence varchar(20) [not null, note: "Savoir-faire ou Savoir-être"]
-}
-
-Table offre {
-  offre_id bigint [pk, increment]
-  source_offre_id varchar(20) [not null, unique, note: "Identifiant de l'offre côté API France Travail"]
-  libelle_poste varchar(200) [not null]
-  description text
-  date_publication date [not null]
-  type_contrat varchar(5) [not null, note: "CDI, CDD, MIS, SAI, CCE"]
-  duree_travail varchar(100)
-  salaire_brut_annuel_estime decimal(10,2) [note: "Valeur médiane extraite du texte libre de salaire"]
-  rome_code varchar(5) [not null]
-  entreprise_id bigint [not null]
-  code_insee char(5) [not null]
-
-  indexes {
-    rome_code
-    type_contrat
-    code_insee
-    date_publication
-    (code_insee, type_contrat)
-  }
-}
-
-Table exigence_offre {
-  offre_id bigint [pk]
-  competence_id bigint [pk]
-  statut_exigence varchar(1) [not null, note: "E = Exigé, S = Souhaité"]
-}
-
-Ref: offre.rome_code > metier_rome.rome_code
-Ref: offre.entreprise_id > entreprise.entreprise_id
-Ref: offre.code_insee > commune.code_insee
-Ref: exigence_offre.offre_id > offre.offre_id
-Ref: exigence_offre.competence_id > competence.competence_id
-```
 
 ## 6. Script d'implémentation PostgreSQL
 

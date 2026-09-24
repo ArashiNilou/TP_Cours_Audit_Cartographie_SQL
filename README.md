@@ -5,6 +5,7 @@
 ```text
 TP_Cours_Audit_Cartographie_SQL/
 ├── README.md                 # Dossier complet du TP (ce fichier)
+├── docker-compose.yml        # Orchestration PostgreSQL avec initialisation automatique
 ├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
@@ -22,6 +23,7 @@ TP_Cours_Audit_Cartographie_SQL/
 │   ├── inspect_offre.py      # Utilitaire dev : dump JSON brut d'une offre (scripts/output/)
 │   └── output/               # Artefacts JSON récupérés localement (non versionnés)
 └── main.py                   # Point d'entrée : connexion / --init / --sync-api
+
 ```
 
 Chaque couche a une responsabilité unique : `docs/` porte la modélisation
@@ -425,15 +427,28 @@ Il est chargé automatiquement par `main.py`.
 
 ### 3. Initialiser le schéma et les données de test
 
+#### Option A : Avec Docker Compose (recommandé pour une évaluation sans installation locale)
+
+Une seule commande démarre PostgreSQL, crée le schéma et injecte les données de test :
+```bash
+docker compose up -d
+```
+Pour réinitialiser complètement la base Docker depuis zéro :
+```bash
+docker compose down -v && docker compose up -d
+```
+
+#### Option B : Avec Python (base locale existante)
+
 ```bash
 python main.py            # vérifie uniquement la connexion à la base
 python main.py --init     # recrée le schéma (sql/01_schema.sql)
                            # et charge le jeu de données de test (sql/02_seed.sql)
 ```
 
-Alternative avec le client `psql`, en exécutant les scripts dans l'ordre
-(chacun est autonome et rejouable grâce aux `DROP TABLE IF EXISTS ... CASCADE`
-du premier fichier) :
+#### Option C : Avec le client `psql`
+
+En exécutant les scripts dans l'ordre (chacun est autonome et rejouable grâce aux `DROP TABLE IF EXISTS ... CASCADE` du premier fichier) :
 
 ```bash
 psql -d emploi -f sql/01_schema.sql

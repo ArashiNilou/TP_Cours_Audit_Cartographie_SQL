@@ -9,6 +9,7 @@ pouvoir rejouer une synchronisation sans dupliquer les données.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
 
@@ -16,6 +17,8 @@ import psycopg
 
 from .api_client import FranceTravailClient
 from .connection import get_connection
+
+logger = logging.getLogger(__name__)
 
 # Capture les nombres décimaux (à virgule ou point) présents dans un texte
 # libre de salaire, par exemple "Annuel de 38000.0 Euros à 45000.0 Euros".
@@ -335,9 +338,10 @@ def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
                     # Une offre non conforme à une contrainte imprévue ne doit
                     # pas faire échouer tout le lot : on l'ignore et on log.
                     cur.execute("ROLLBACK TO SAVEPOINT offre_courante;")
-                    print(
-                        f"Offre {offre['source_offre_id']} ignorée "
-                        f"(erreur base de données) : {exc}"
+                    logger.warning(
+                        "Offre %s ignorée (erreur base de données) : %s",
+                        offre["source_offre_id"],
+                        exc,
                     )
                     continue
                 else:

@@ -8,6 +8,7 @@ Usage :
 """
 
 import argparse
+import logging
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,7 @@ from src.ingest import sync_from_api
 from src.schema import initialize_database
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 def check_connection() -> None:

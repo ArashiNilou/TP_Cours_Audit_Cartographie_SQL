@@ -31,6 +31,8 @@ desktop.ini
 *.tmp
 *.bak
 *.csv
+~$*.pptx
+.~lock.*#
 
 # --- Sorties des scripts utilitaires (donnees API brutes, artefacts locaux) ---
 scripts/output/

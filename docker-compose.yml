@@ -219,6 +219,29 @@ services:
       timeout: 5s
       retries: 12
 
+  dataviz:
+    build:
+      context: ./dataviz
+    container_name: dataviz_plotly_tp2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-emploi}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      DATAVIZ_REFRESH_SECONDS: ${DATAVIZ_REFRESH_SECONDS:-60}
+    ports:
+      - "${DATAVIZ_PORT:-8050}:8050"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8050/health', timeout=2).read()\""]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
   metabase-setup:
     build:
       context: .

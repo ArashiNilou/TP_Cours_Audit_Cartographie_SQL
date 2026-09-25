@@ -12,6 +12,7 @@ flowchart LR
     Spark --> LakeQuarantine[(Volume data_lake<br/>quarantine JSON)]
     Spark --> Postgres[(PostgreSQL<br/>volume pgdata<br/>schema 3NF TP1 + audit TP2)]
     Postgres --> Metabase[Metabase<br/>dataviz]
+    Postgres --> Dash[Plotly Dash<br/>dataviz interactive]
     Postgres --> PgExporter[PostgreSQL exporter]
     Kafka --> KafkaExporter[Kafka exporter]
     Producer --> Prometheus[Prometheus]

@@ -61,7 +61,8 @@ Le projet se fait en deux temps :
 1. Installer et démarrer [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 2. Copier `.env.example` en `.env` et remplir les mots de passe et les identifiants France Travail.
 3. Lancer `docker compose up -d --build`.
-4. Ouvrir <http://localhost:3000> (Metabase, graphiques métier) et
+4. Ouvrir <http://localhost:3000> (Metabase, graphiques métier),
+   <http://localhost:8050> (Plotly Dash, graphiques interactifs) et
    <http://localhost:3001> (Grafana, surveillance technique).
 
 La liste complète des adresses, avec ce que vous devez y voir, est dans
@@ -74,6 +75,7 @@ TP_Cours_Audit_Cartographie_SQL/
 ├── README.md                 # Dossier complet du TP (ce fichier)
 ├── docker-compose.yml        # Plateforme TP2 complète orchestrée par Docker
 ├── docker/                   # Images Python et Spark
+├── dataviz/                  # Dashboard interactif Plotly Dash (app.py + Dockerfile)
 ├── monitoring/               # Prometheus et provisioning Grafana
 ├── requirements.txt          # Dépendances des services Python
 ├── requirements-spark.txt    # Dépendances du traitement PySpark
@@ -634,6 +636,7 @@ dans PostgreSQL et les affiche dans des tableaux de bord. Tout se lance avec
 | **PySpark** | L'outil qui nettoie les données (champs vides, doublons, types). |
 | **PostgreSQL** | La base de données finale, propre et organisée en tables. |
 | **Metabase** | L'outil de graphiques pour lire les données métier (offres, compétences, villes). |
+| **Plotly Dash** | Une page web en Python avec des graphiques **interactifs** (filtres, zoom, survol, carte). |
 | **Prometheus** | Il relève régulièrement des chiffres techniques sur chaque service (est-il en marche ? combien de messages ?). |
 | **Grafana** | Il affiche ces chiffres techniques en graphiques pour surveiller la plateforme. |
 
@@ -663,7 +666,7 @@ corriger ou compléter le nom de la ville et sa position GPS.
        ↓
 5. CHARGER      les offres propres sont enregistrées dans PostgreSQL (tables du TP1)
        ↓
-6. VISUALISER   Metabase affiche les offres, compétences et villes
+6. VISUALISER   Metabase et Plotly Dash affichent les offres, compétences et villes
        ↓
 7. SUPERVISER   Prometheus + Grafana vérifient que tout fonctionne
                 et comparent le nombre d'offres brutes et propres
@@ -765,6 +768,7 @@ Dans Docker Desktop, ils sont visibles dans les onglets *Containers*,
 | Nettoyage PySpark → PostgreSQL | `spark-batch` | `spark_batch_tp2` | `tp_cours_audit_cartographie_sql-spark-batch` | **Construite** (`docker/Dockerfile.spark`) |
 | Graphiques métier | `metabase` | `metabase_tp2` | `metabase/metabase:v0.50.18` | Téléchargée |
 | Configuration auto de Metabase (optionnel, s'arrête après) | `metabase-setup` | `tp_cours_audit_cartographie_sql-metabase-setup-1` | `tp_cours_audit_cartographie_sql-metabase-setup` | **Construite** (`docker/Dockerfile.python`) |
+| Graphiques interactifs Plotly | `dataviz` | `dataviz_plotly_tp2` | `tp_cours_audit_cartographie_sql-dataviz` | **Construite** (`dataviz/Dockerfile`) |
 | Métriques PostgreSQL | `postgres-exporter` | `postgres_exporter_tp2` | `prometheuscommunity/postgres-exporter:v0.15.0` | Téléchargée |
 | Métriques Kafka | `kafka-exporter` | `kafka_exporter_tp2` | `danielqsj/kafka-exporter:v1.7.0` | Téléchargée |
 | Collecte des métriques | `prometheus` | `prometheus_tp2` | `prom/prometheus:v2.53.1` | Téléchargée |
@@ -810,6 +814,7 @@ connecte à l'hôte `postgres` et non à `localhost`.
 | Service | URL | À quoi ça sert | Ce que vous devez voir | Identifiants |
 |---|---|---|---|---|
 | **Metabase** | <http://localhost:3000> | Tableau de bord **métier** : lire les offres d'emploi. | Le dashboard **TP2 - Marché de l'emploi** : offres par contrat, compétences les plus demandées, offres par ville, compteurs brut / propre. | Compte créé au premier lancement. |
+| **Plotly Dash** | <http://localhost:8050> | Tableau de bord **interactif** codé en Python avec Plotly. | Des filtres (contrat, domaine, commune), 5 indicateurs, 6 graphiques (contrats, top compétences, carte des offres, salaires, publications, Raw vs Clean) et un tableau des offres triable. | Aucun |
 | **Grafana** | <http://localhost:3001> | Tableau de bord **technique** : surveiller la plateforme. | Menu *Dashboards* → **TP2 Data Platform Overview** : services en marche, flux Kafka, activité PostgreSQL, courbe Raw vs Clean vs Rejected. | `admin` / `admin` |
 | **Kafka UI** | <http://localhost:8080> | Voir les messages qui passent dans Kafka. | Menu *Topics* → `france-travail.offres.raw` : le nombre de messages augmente à chaque collecte ; onglet *Messages* pour lire une offre. | Aucun |
 | **Prometheus** | <http://localhost:9090> | Vérifier que chaque service est bien surveillé. | Menu *Status* → *Targets* : toutes les lignes doivent être **UP** (en vert). | Aucun |
@@ -861,7 +866,7 @@ Metabase : elle n'a rien à voir avec le TP et peut être supprimée.
    docker compose run --rm -e SPARK_BATCH_RUN_ONCE=true spark-batch
    ```
 
-4. **Metabase** : les offres apparaissent dans le dashboard.
+4. **Metabase** et **Plotly Dash** : les offres apparaissent dans les dashboards.
 5. **Grafana** : les services sont verts et la courbe Raw vs Clean montre
    combien d'offres brutes sont devenues des offres propres.
 

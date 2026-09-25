@@ -505,7 +505,13 @@ Une seule commande démarre PostgreSQL, crée le schéma et injecte les données
 ```bash
 docker compose up -d
 ```
-Pour réinitialiser complètement la base Docker depuis zéro :
+PostgreSQL tourne dans le conteneur `postgres_emploi` (image `postgres:16-alpine`).
+Ses données sont stockées dans le volume Docker
+`tp_cours_audit_cartographie_sql_pgdata`. Les scripts `sql/01_schema.sql`,
+`sql/02_seed.sql` et `sql/04_tp2_additive.sql` ne sont exécutés qu'au premier
+démarrage, quand ce volume est encore vide.
+
+Pour réinitialiser complètement la base Docker depuis zéro (supprime les volumes) :
 ```bash
 docker compose down -v && docker compose up -d
 ```
@@ -576,6 +582,10 @@ dans PostgreSQL et les affiche dans des tableaux de bord. Tout se lance avec
 |---|---|
 | **API** | Un site qui renvoie des données au lieu de pages web. Ici : les offres d'emploi de France Travail. |
 | **Docker** | Un outil qui lance chaque programme dans une « boîte » (un conteneur) déjà configurée. Pas besoin d'installer Kafka, Spark, etc. |
+| **Image Docker** | Le « modèle » d'un programme, prêt à l'emploi (comme un fichier d'installation). Elle ne contient pas vos données. |
+| **Conteneur Docker** | Un programme **en marche**, lancé à partir d'une image. |
+| **Volume Docker** | Un espace de stockage géré par Docker, où les conteneurs gardent leurs **données**. Il survit à l'arrêt des conteneurs. |
+| **Montage local (bind mount)** | Un fichier ou dossier **du projet** rendu visible dans un conteneur (configurations, scripts SQL). |
 | **Kafka** | Une « boîte aux lettres » : le producteur y dépose les offres, un autre programme vient les chercher. |
 | **Data Lake** | Un dossier où l'on garde **toutes** les données brutes, sans rien effacer, pour pouvoir tout rejouer. |
 | **PySpark** | L'outil qui nettoie les données (champs vides, doublons, types). |
@@ -618,7 +628,9 @@ corriger ou compléter le nom de la ville et sa position GPS.
 
 Le schéma complet est dans [`docs/architecture-tp2.mmd`](docs/architecture-tp2.mmd).
 
-Organisation du Data Lake :
+Organisation du Data Lake. Ce n'est **pas** un dossier du projet : c'est le
+**volume Docker** `tp_cours_audit_cartographie_sql_data_lake`, visible dans
+les conteneurs sous le chemin `/data-lake` :
 
 ```text
 data-lake/
@@ -627,8 +639,33 @@ data-lake/
 │   └── communes/         # référentiel officiel des communes
 ├── aggregated/offres/    # offres + infos de la commune officielle
 ├── curated/offres/       # offres nettoyées par PySpark (format Parquet)
-└── quarantine/           # offres rejetées, avec la raison du rejet
+└── quarantine/spark/     # offres rejetées, avec la raison du rejet
 ```
+
+Le Data Lake ne contient **pas de code**, seulement des **fichiers de
+données**, dans trois formats :
+
+| Dossier | Format | Contenu | Écrit par | Exemple de fichier |
+|---|---|---|---|---|
+| `raw/france_travail/` | **JSON**, un fichier par offre | L'offre brute, exactement comme reçue de Kafka | `raw_aggregator_tp2` (Python) | `ingestion_date=2026-09-25/bbdcb3ae-….json` |
+| `raw/communes/` | **JSON**, un fichier par collecte | La liste des communes de l'API Géo | `communes_collector_tp2` (Python) | `ingestion_date=2026-09-25/communes_20260925T085832_594092Z.json` et `_latest.json` (copie de la dernière collecte) |
+| `aggregated/offres/` | **JSONL**, une offre par ligne | L'offre et la fiche de sa commune officielle | `raw_aggregator_tp2` (Python) | `ingestion_date=2026-09-25/part-50e0a1ec-….jsonl` |
+| `curated/offres/` | **Parquet** compressé Snappy | Les offres nettoyées, en colonnes typées | `spark_batch_tp2` (PySpark) | `run_id=…/part-00000-….snappy.parquet` |
+| `quarantine/spark/` | **JSON Lines**, une offre rejetée par ligne | Les offres rejetées et la raison du rejet | `spark_batch_tp2` (PySpark) | `run_id=…/part-00000-….json` |
+
+Comment lire ces fichiers :
+
+* **JSON / JSONL** : du texte lisible dans n'importe quel éditeur, par exemple
+  `{"event_id": "...", "payload": {...}}`. En JSONL, chaque ligne est un objet
+  JSON complet.
+* **Parquet** : un format binaire rangé par colonnes, très rapide pour Spark.
+  Il ne se lit pas dans un éditeur de texte : il faut passer par Spark, pandas
+  ou DuckDB.
+* **Fichiers `_SUCCESS` et `.crc`** : Spark les crée automatiquement.
+  `_SUCCESS` signale que l'écriture est terminée, et les `.crc` servent à
+  vérifier que les fichiers ne sont pas corrompus.
+* **Dossiers `ingestion_date=…` et `run_id=…`** : ils classent les fichiers
+  par jour de collecte ou par passage de Spark (on parle de *partitions*).
 
 À chaque passage, Spark note dans la table `tp2_pipeline_run` le nombre
 d'offres **brutes** (`raw_count`), **propres** (`clean_count`) et
@@ -663,6 +700,67 @@ d'offres **brutes** (`raw_count`), **propres** (`clean_count`) et
    ```
 
 Le premier démarrage prend quelques minutes (téléchargement des images).
+
+### Où se trouve quoi dans Docker
+
+Les noms commençant par `tp_cours_audit_cartographie_sql` sont créés
+automatiquement par Docker Compose à partir du nom du dossier du projet.
+Dans Docker Desktop, ils sont visibles dans les onglets *Containers*,
+*Images* et *Volumes*.
+
+#### Conteneurs et images
+
+| Rôle | Service Compose | Nom complet du conteneur | Image | Origine de l'image |
+|---|---|---|---|---|
+| Base de données | `postgres` | `postgres_emploi` | `postgres:16-alpine` | Téléchargée (Docker Hub) |
+| Kafka (boîte aux lettres) | `kafka` | `kafka_tp2` | `apache/kafka:3.7.1` | Téléchargée |
+| Création du topic Kafka (s'arrête après) | `kafka-init` | `tp_cours_audit_cartographie_sql-kafka-init-1` | `apache/kafka:3.7.1` | Téléchargée |
+| Interface Kafka | `kafka-ui` | `kafka_ui_tp2` | `provectuslabs/kafka-ui:v0.7.2` | Téléchargée |
+| Source 1 : collecte France Travail | `ft-producer` | `ft_producer_tp2` | `tp_cours_audit_cartographie_sql-ft-producer` | **Construite** par le projet (`docker/Dockerfile.python`) |
+| Source 2 : collecte des communes | `communes-collector` | `communes_collector_tp2` | `tp_cours_audit_cartographie_sql-communes-collector` | **Construite** (`docker/Dockerfile.python`) |
+| Agrégation Kafka → Data Lake | `raw-aggregator` | `raw_aggregator_tp2` | `tp_cours_audit_cartographie_sql-raw-aggregator` | **Construite** (`docker/Dockerfile.python`) |
+| Nettoyage PySpark → PostgreSQL | `spark-batch` | `spark_batch_tp2` | `tp_cours_audit_cartographie_sql-spark-batch` | **Construite** (`docker/Dockerfile.spark`) |
+| Graphiques métier | `metabase` | `metabase_tp2` | `metabase/metabase:v0.50.18` | Téléchargée |
+| Configuration auto de Metabase (optionnel, s'arrête après) | `metabase-setup` | `tp_cours_audit_cartographie_sql-metabase-setup-1` | `tp_cours_audit_cartographie_sql-metabase-setup` | **Construite** (`docker/Dockerfile.python`) |
+| Métriques PostgreSQL | `postgres-exporter` | `postgres_exporter_tp2` | `prometheuscommunity/postgres-exporter:v0.15.0` | Téléchargée |
+| Métriques Kafka | `kafka-exporter` | `kafka_exporter_tp2` | `danielqsj/kafka-exporter:v1.7.0` | Téléchargée |
+| Collecte des métriques | `prometheus` | `prometheus_tp2` | `prom/prometheus:v2.53.1` | Téléchargée |
+| Graphiques techniques | `grafana` | `grafana_tp2` | `grafana/grafana:11.1.4` | Téléchargée |
+| CPU / mémoire des conteneurs | `cadvisor` | `cadvisor_tp2` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Téléchargée (Google) |
+
+#### Volumes (là où sont les données)
+
+| Nom complet du volume | Chemin dans le conteneur | Utilisé par | Contenu |
+|---|---|---|---|
+| `tp_cours_audit_cartographie_sql_pgdata` | `/var/lib/postgresql/data` | `postgres_emploi` | Toutes les tables PostgreSQL (offres, compétences, communes, suivi du pipeline). |
+| `tp_cours_audit_cartographie_sql_kafka_data` | `/var/lib/kafka/data` | `kafka_tp2` | Les messages Kafka (offres en transit). |
+| `tp_cours_audit_cartographie_sql_data_lake` | `/data-lake` | `communes_collector_tp2`, `raw_aggregator_tp2`, `spark_batch_tp2` | Le **Data Lake** : `raw/`, `aggregated/`, `curated/`, `quarantine/`. |
+| `tp_cours_audit_cartographie_sql_metabase_data` | `/metabase-data` | `metabase_tp2` | Comptes, connexions et dashboards Metabase. |
+| `tp_cours_audit_cartographie_sql_grafana_data` | `/var/lib/grafana` | `grafana_tp2` | Réglages et comptes Grafana. |
+
+Pour regarder le contenu d'un volume, par exemple le Data Lake :
+
+* **Docker Desktop** : *Volumes* → `tp_cours_audit_cartographie_sql_data_lake` → onglet *Data* ;
+* **ligne de commande** : `docker exec raw_aggregator_tp2 ls -R /data-lake`.
+
+#### Fichiers du projet montés dans les conteneurs
+
+Ces fichiers restent dans le dépôt Git. Les conteneurs les lisent sans pouvoir les modifier.
+
+| Fichier ou dossier du projet | Chemin dans le conteneur | Conteneur | Rôle |
+|---|---|---|---|
+| `sql/01_schema.sql`, `sql/02_seed.sql`, `sql/04_tp2_additive.sql` | `/docker-entrypoint-initdb.d/` | `postgres_emploi` | Création des tables au **premier** démarrage de la base. |
+| `monitoring/prometheus.yml` | `/etc/prometheus/prometheus.yml` | `prometheus_tp2` | Liste des services à surveiller. |
+| `monitoring/postgres_exporter_queries.yaml` | `/etc/postgres_exporter/queries.yaml` | `postgres_exporter_tp2` | Requêtes qui calculent les compteurs Raw / Clean. |
+| `monitoring/grafana/provisioning/` | `/etc/grafana/provisioning` | `grafana_tp2` | Connexion automatique de Grafana à Prometheus. |
+| `monitoring/grafana/dashboards/` | `/var/lib/grafana/dashboards` | `grafana_tp2` | Dashboard **TP2 Data Platform Overview**. |
+
+#### Réseau
+
+Tous les conteneurs communiquent sur le réseau Docker
+`tp_cours_audit_cartographie_sql_default`. Entre eux, ils s'appellent par leur
+**nom de service** (`postgres`, `kafka`…). C'est pour cela que Metabase se
+connecte à l'hôte `postgres` et non à `localhost`.
 
 ### Les adresses à ouvrir dans le navigateur
 
@@ -740,6 +838,8 @@ Pour une démo plus rapide, baisser dans `.env`
 | Lancer les tests | `python -m unittest discover -s tests -t . -v` |
 | Vérifier le fichier Docker Compose | `docker compose config --quiet` |
 
-`docker compose down -v` supprime **toutes** les données (base, Kafka, Data
-Lake, Metabase, Grafana). Les données générées (`data-lake/`, `*.jsonl`,
+`docker compose down -v` supprime **toutes** les données, c'est-à-dire les
+5 volumes `tp_cours_audit_cartographie_sql_pgdata`, `_kafka_data`,
+`_data_lake`, `_metabase_data` et `_grafana_data`. Les images et les fichiers
+du projet sont conservés. Les données générées (`data-lake/`, `*.jsonl`,
 `*.parquet`, `scripts/output/`) ne sont jamais envoyées sur Git.

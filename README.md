@@ -1,5 +1,29 @@
 # TP - Audit, cartographie et modélisation de données : tensions sur les compétences numériques
 
+## En bref (à lire en premier)
+
+**De quoi parle ce projet ?** On récupère de vraies offres d'emploi publiées
+par France Travail pour savoir **quelles compétences numériques sont les plus
+recherchées, et où en France**.
+
+Le projet se fait en deux temps :
+
+| Partie | Ce qu'on fait | Où le lire |
+|---|---|---|
+| **TP1** | On étudie les données et on dessine la base de données : quelles tables, quelles colonnes, quels liens. | Sections 1 à 7 |
+| **TP2** | On construit une chaîne automatique qui collecte, nettoie, stocke et affiche les offres. | Section 8 |
+
+**Pour tout lancer rapidement :**
+
+1. Installer et démarrer [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. Copier `.env.example` en `.env` et remplir les mots de passe et les identifiants France Travail.
+3. Lancer `docker compose up -d --build`.
+4. Ouvrir <http://localhost:3000> (Metabase, graphiques métier) et
+   <http://localhost:3001> (Grafana, surveillance technique).
+
+La liste complète des adresses, avec ce que vous devez y voir, est dans
+[la section 8](#les-adresses-à-ouvrir-dans-le-navigateur).
+
 ## Architecture du projet
 
 ```text
@@ -540,123 +564,182 @@ python scripts/inspect_offre.py 214JMGC       # offre précise par identifiant
 
 ## 8. TP2 - Plateforme data temps quasi réel
 
-Le TP2 conserve le schéma 3NF et les commandes TP1, puis ajoute une chaîne
-Docker orchestrée autour de Kafka, d'un Data Lake partagé, d'un batch PySpark,
-de PostgreSQL, de Metabase et d'une supervision Prometheus/Grafana.
+### En une phrase
 
-### Sources
+Le TP2 récupère automatiquement des offres d'emploi, les nettoie, les range
+dans PostgreSQL et les affiche dans des tableaux de bord. Tout se lance avec
+**une seule commande** Docker.
 
-| Source | Rôle | Authentification | Destination initiale |
+### Les mots à connaître
+
+| Mot | Explication simple |
+|---|---|
+| **API** | Un site qui renvoie des données au lieu de pages web. Ici : les offres d'emploi de France Travail. |
+| **Docker** | Un outil qui lance chaque programme dans une « boîte » (un conteneur) déjà configurée. Pas besoin d'installer Kafka, Spark, etc. |
+| **Kafka** | Une « boîte aux lettres » : le producteur y dépose les offres, un autre programme vient les chercher. |
+| **Data Lake** | Un dossier où l'on garde **toutes** les données brutes, sans rien effacer, pour pouvoir tout rejouer. |
+| **PySpark** | L'outil qui nettoie les données (champs vides, doublons, types). |
+| **PostgreSQL** | La base de données finale, propre et organisée en tables. |
+| **Metabase** | L'outil de graphiques pour lire les données métier (offres, compétences, villes). |
+| **Prometheus** | Il relève régulièrement des chiffres techniques sur chaque service (est-il en marche ? combien de messages ?). |
+| **Grafana** | Il affiche ces chiffres techniques en graphiques pour surveiller la plateforme. |
+
+### Les deux sources de données
+
+| Source | Ce qu'elle apporte | Comment on la récupère | Où elle arrive |
 |---|---|---|---|
-| France Travail API `Offres d'emploi v2` | Source 1 événementielle : offres pollées en continu par `src.tp2.producer` puis publiées dans Kafka. | OAuth2 client credentials via `FT_CLIENT_ID` / `FT_CLIENT_SECRET`. | Topic Kafka `france-travail.offres.raw`. |
-| Geo API gouvernementale `https://geo.api.gouv.fr/communes?fields=nom,code,codesPostaux,centre&format=json` | Source 2 de référence officielle des communes, complémentaire et jointe par code INSEE. | Aucune. | `/data-lake/raw/communes/` et pointeur `_latest.json`. |
+| **API France Travail** « Offres d'emploi v2 » | Les offres d'emploi : métier, contrat, salaire, compétences, commune. | Le programme `ft-producer` l'interroge toutes les 15 minutes (compte France Travail nécessaire). | Kafka, dans le topic `france-travail.offres.raw`. |
+| **API Géo** du gouvernement (`geo.api.gouv.fr/communes`) | La liste officielle des communes : nom, codes postaux, coordonnées GPS. | Le programme `communes-collector` la télécharge une fois par jour (sans compte). | Data Lake, dossier `raw/communes/`. |
 
-### Architecture et flux
+**Pourquoi les deux ?** Chaque offre contient un code de commune (code INSEE).
+On s'en sert pour relier l'offre à la fiche officielle de la commune, et ainsi
+corriger ou compléter le nom de la ville et sa position GPS.
 
-Le diagramme Mermaid autonome est disponible dans
-[`docs/architecture-tp2.mmd`](docs/architecture-tp2.mmd).
+### Le trajet d'une offre, étape par étape
 
-1. `ft-producer` interroge périodiquement France Travail et émet des
-   événements contractuels `tp2.offer.v1` dans Kafka.
-2. `communes-collector` collecte périodiquement le référentiel officiel des
-   communes dans le Data Lake.
-3. `raw-aggregator` consomme Kafka avec `enable_auto_commit=false`, écrit
-   d'abord l'événement brut immutable dans `/data-lake/raw/france_travail/`,
-   enrichit par code INSEE avec le dernier référentiel communes disponible,
-   écrit un JSONL partitionné par date dans `/data-lake/aggregated/offres/`,
-   puis commit l'offset Kafka uniquement après ces écritures durables. Si la
-   source 2 manque au démarrage, les lignes sont explicitement marquées
-   `commune_reference_status = "missing_source2"`.
-4. `spark-batch` lit les JSONL agrégés, valide les champs obligatoires, caste
-   et déduplique par identifiant d'offre source, écrit le Parquet curé dans
-   `/data-lake/curated/offres/`, écrit les rejets dans
-   `/data-lake/quarantine/`, puis réutilise les transformations et upserts TP1
-   (`src.ingest.load_offres`) pour charger les tables 3NF PostgreSQL. Les
-   valeurs officielles Geo (nom, code postal et coordonnées) remplacent les
-   valeurs API lorsqu'une correspondance existe ; le résultat de jointure est
-   auditable dans `tp2_offre_enrichment`.
-5. Chaque run Spark alimente la table additive `tp2_pipeline_run` avec
-   `raw_count`, `clean_count` et `rejected_count`. Le script TP2
-   [`sql/04_tp2_additive.sql`](sql/04_tp2_additive.sql) est non destructif et
-   ne rejoue jamais le DDL `DROP` de `sql/01_schema.sql` pendant les batchs.
-
-### Démarrage
-
-Copier `.env.example` vers `.env`, renseigner au minimum les variables
-PostgreSQL et, pour produire de vraies offres, `FT_CLIENT_ID` et
-`FT_CLIENT_SECRET`. Sans identifiants France Travail, la plateforme démarre et
-reste observable, mais aucun événement source 1 réel n'est produit.
-
-```bash
-docker compose up -d --build
+```text
+1. COLLECTER    ft-producer récupère les offres sur l'API France Travail
+       ↓
+2. TRANSPORTER  les offres sont déposées dans Kafka
+       ↓
+3. STOCKER      raw-aggregator les copie telles quelles dans le Data Lake (raw/)
+                puis les relie aux communes officielles (aggregated/)
+       ↓
+4. TRANSFORMER  spark-batch (PySpark) nettoie : champs obligatoires, doublons, types
+                les offres invalides sont mises de côté dans quarantine/
+       ↓
+5. CHARGER      les offres propres sont enregistrées dans PostgreSQL (tables du TP1)
+       ↓
+6. VISUALISER   Metabase affiche les offres, compétences et villes
+       ↓
+7. SUPERVISER   Prometheus + Grafana vérifient que tout fonctionne
+                et comparent le nombre d'offres brutes et propres
 ```
 
-URLs locales par défaut :
+Le schéma complet est dans [`docs/architecture-tp2.mmd`](docs/architecture-tp2.mmd).
 
-| Service | URL |
-|---|---|
-| Kafka UI | <http://localhost:8080> |
-| Metabase | <http://localhost:3000> |
-| Prometheus | <http://localhost:9090> |
-| Grafana | <http://localhost:3001> |
-| Metrics producteur France Travail | <http://localhost:8001/metrics> |
-| Metrics collecteur communes | <http://localhost:8002/metrics> |
-| Metrics agrégateur | <http://localhost:8003/metrics> |
+Organisation du Data Lake :
 
-Metabase est provisionnable avec le profil dédié après avoir défini
-`MB_ADMIN_PASSWORD` dans `.env` :
+```text
+data-lake/
+├── raw/
+│   ├── france_travail/   # offres brutes, exactement comme reçues
+│   └── communes/         # référentiel officiel des communes
+├── aggregated/offres/    # offres + infos de la commune officielle
+├── curated/offres/       # offres nettoyées par PySpark (format Parquet)
+└── quarantine/           # offres rejetées, avec la raison du rejet
+```
+
+À chaque passage, Spark note dans la table `tp2_pipeline_run` le nombre
+d'offres **brutes** (`raw_count`), **propres** (`clean_count`) et
+**rejetées** (`rejected_count`). C'est l'indicateur « Raw vs Clean ».
+
+### Lancer la plateforme
+
+**Prérequis :** Docker Desktop installé et démarré.
+
+1. Copier le fichier d'exemple de configuration :
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Ouvrir `.env` et remplir au minimum :
+   * `PGPASSWORD` : mot de passe de la base (par exemple `postgres`) ;
+   * `FT_CLIENT_ID` et `FT_CLIENT_SECRET` : identifiants obtenus sur
+     [francetravail.io](https://francetravail.io). Sans eux, tout démarre
+     mais aucune offre réelle n'est récupérée.
+
+3. Lancer tout :
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. Vérifier que tout tourne (colonne `STATUS` à `Up` ou `healthy`) :
+
+   ```bash
+   docker compose ps
+   ```
+
+Le premier démarrage prend quelques minutes (téléchargement des images).
+
+### Les adresses à ouvrir dans le navigateur
+
+| Service | URL | À quoi ça sert | Ce que vous devez voir | Identifiants |
+|---|---|---|---|---|
+| **Metabase** | <http://localhost:3000> | Tableau de bord **métier** : lire les offres d'emploi. | Le dashboard **TP2 - Marché de l'emploi** : offres par contrat, compétences les plus demandées, offres par ville, compteurs brut / propre. | Compte créé au premier lancement. |
+| **Grafana** | <http://localhost:3001> | Tableau de bord **technique** : surveiller la plateforme. | Menu *Dashboards* → **TP2 Data Platform Overview** : services en marche, flux Kafka, activité PostgreSQL, courbe Raw vs Clean vs Rejected. | `admin` / `admin` |
+| **Kafka UI** | <http://localhost:8080> | Voir les messages qui passent dans Kafka. | Menu *Topics* → `france-travail.offres.raw` : le nombre de messages augmente à chaque collecte ; onglet *Messages* pour lire une offre. | Aucun |
+| **Prometheus** | <http://localhost:9090> | Vérifier que chaque service est bien surveillé. | Menu *Status* → *Targets* : toutes les lignes doivent être **UP** (en vert). | Aucun |
+| **cAdvisor** | <http://localhost:8081> | Consommation CPU et mémoire de chaque conteneur. | La liste des conteneurs Docker avec leurs graphiques CPU / mémoire. | Aucun |
+| Métriques producteur | <http://localhost:8001/metrics> | Chiffres bruts du programme qui interroge France Travail. | Une page de texte avec le nombre d'offres récupérées et envoyées dans Kafka. | Aucun |
+| Métriques communes | <http://localhost:8002/metrics> | Chiffres bruts du programme qui télécharge les communes. | Une page de texte indiquant si le référentiel des communes est disponible et combien il en contient. | Aucun |
+| Métriques agrégateur | <http://localhost:8003/metrics> | Chiffres bruts du programme qui lit Kafka et écrit dans le Data Lake. | Une page de texte avec le nombre d'offres lues, écrites et reliées à une commune. | Aucun |
+| Métriques PostgreSQL | <http://localhost:9187/metrics> | Chiffres bruts de la base de données. | Une page de texte ; la ligne `pg_up 1` signifie que la base répond. | Aucun |
+| Métriques Kafka | <http://localhost:9308/metrics> | Chiffres bruts de Kafka. | Une page de texte avec les topics et le nombre de messages. | Aucun |
+
+Les pages `/metrics` ne sont pas faites pour être lues par un humain : elles
+sont lues automatiquement par Prometheus, puis affichées en graphiques dans
+Grafana.
+
+### Configurer Metabase
+
+**Option automatique (recommandée).** Mettre dans `.env` l'e-mail et le mot
+de passe du compte Metabase (`MB_ADMIN_EMAIL`, `MB_ADMIN_PASSWORD`), puis :
 
 ```bash
 docker compose --profile metabase-setup up metabase-setup
 ```
 
-Le provisionnement crée la connexion PostgreSQL, quatre questions SQL et le
-dashboard métier **TP2 - Marché de l'emploi** (contrats, compétences,
-territoires et qualité Raw/Clean).
+Cela crée la connexion à la base, quatre graphiques et le dashboard
+**TP2 - Marché de l'emploi**.
 
-### Supervision
+**Option manuelle.** Dans Metabase : *Admin* → *Bases de données* →
+*Ajouter une base de données* → PostgreSQL :
 
-Prometheus collecte les métriques des services Python, de PostgreSQL, de
-Kafka et, si activé, de cAdvisor. Grafana provisionne automatiquement le
-dashboard `TP2 Data Platform Overview`, qui couvre la disponibilité des
-services, Kafka, PostgreSQL, la disponibilité de la source communes et les
-volumes raw / clean / rejected issus de la vue `tp2_pipeline_latest_counts`.
+| Champ | Valeur | Pourquoi |
+|---|---|---|
+| Nom affiché | `TP2 PostgreSQL` | Libre, juste pour s'y retrouver. |
+| Hôte | `postgres` | Metabase tourne dans Docker : il faut le **nom du service**, pas `localhost`. |
+| Port | `5432` | Port standard de PostgreSQL. |
+| Base de données | valeur de `PGDATABASE` dans `.env` (ex. `emploie`) | Nom de la base créée par Docker. |
+| Utilisateur | `postgres` | Attention au remplissage automatique du navigateur. |
+| Mot de passe | valeur de `PGPASSWORD` dans `.env` | Même mot de passe que la base. |
 
-cAdvisor est démarré avec la plateforme et expose les métriques CPU/mémoire
-des conteneurs. Sur un environnement qui interdit ses montages bas niveau,
-il peut être désactivé avec `docker compose stop cadvisor` sans interrompre
-le pipeline de données.
+La base **Sample Database** visible dans Metabase est un exemple fourni par
+Metabase : elle n'a rien à voir avec le TP et peut être supprimée.
 
-### Démo courte
+### Démonstration rapide
 
-1. Démarrer la plateforme : `docker compose up -d --build`.
-2. Vérifier le topic dans Kafka UI et la disponibilité des services dans
-   Grafana.
-3. Avec des identifiants France Travail, attendre un cycle producteur ou
-   réduire `FT_PRODUCER_POLL_INTERVAL_SECONDS` / `FT_PRODUCER_MAX_RESULTS`
-   dans `.env` pour une démonstration rapide.
-4. Forcer un batch unique si besoin :
-   `docker compose run --rm -e SPARK_BATCH_RUN_ONCE=true spark-batch`.
-5. Consulter les tables `offre`, `commune`, `competence`,
-   `exigence_offre`, la vue `tp2_dashboard_offres` et la table
-   `tp2_pipeline_run` dans PostgreSQL ou Metabase.
+1. `docker compose up -d --build`, puis `docker compose ps`.
+2. **Kafka UI** : le topic `france-travail.offres.raw` contient des messages.
+3. Lancer tout de suite un nettoyage Spark, sans attendre 30 minutes :
 
-### Tests
+   ```bash
+   docker compose run --rm -e SPARK_BATCH_RUN_ONCE=true spark-batch
+   ```
 
-```bash
-python -m unittest discover -s tests -t . -v
-docker compose config --quiet
-```
+4. **Metabase** : les offres apparaissent dans le dashboard.
+5. **Grafana** : les services sont verts et la courbe Raw vs Clean montre
+   combien d'offres brutes sont devenues des offres propres.
 
-### Réinitialisation
+Pour une démo plus rapide, baisser dans `.env`
+`FT_PRODUCER_POLL_INTERVAL_SECONDS` (fréquence de collecte, en secondes) et
+`SPARK_BATCH_INTERVAL_SECONDS` (fréquence du nettoyage), puis relancer
+`docker compose up -d`.
 
-Pour repartir de zéro en environnement Docker local :
+### Commandes utiles
 
-```bash
-docker compose down -v
-docker compose up -d --build
-```
+| Besoin | Commande |
+|---|---|
+| Voir l'état des services | `docker compose ps` |
+| Lire les journaux d'un service | `docker compose logs -f ft-producer` |
+| Arrêter la plateforme (données conservées) | `docker compose down` |
+| Tout effacer et repartir de zéro | `docker compose down -v` puis `docker compose up -d --build` |
+| Lancer les tests | `python -m unittest discover -s tests -t . -v` |
+| Vérifier le fichier Docker Compose | `docker compose config --quiet` |
 
-Cette commande supprime les volumes nommés PostgreSQL, Kafka, Data Lake,
-Metabase et Grafana. Les données brutes ou générées localement restent
-ignorées par git (`data-lake/`, `*.jsonl`, `*.parquet`, `scripts/output/`).
+`docker compose down -v` supprime **toutes** les données (base, Kafka, Data
+Lake, Metabase, Grafana). Les données générées (`data-lake/`, `*.jsonl`,
+`*.parquet`, `scripts/output/`) ne sont jamais envoyées sur Git.

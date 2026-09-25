@@ -651,6 +651,14 @@ dans PostgreSQL et les affiche dans des tableaux de bord. Tout se lance avec
 On s'en sert pour relier l'offre à la fiche officielle de la commune, et ainsi
 corriger ou compléter le nom de la ville et sa position GPS.
 
+Le producteur France Travail parcourt les **101 départements**, sans filtre de
+métier. Il utilise la pagination de l'API et récupère jusqu'à **200 offres
+récentes par département et par cycle**. Cette limite protège le poste local
+et les quotas de l'API ; elle se règle avec
+`FT_PRODUCER_MAX_PER_DEPARTEMENT` (`0` signifie : aller jusqu'au plafond de
+l'API, soit 1 149 résultats par département). Les offres inchangées ne sont
+pas republiées pendant la durée de vie du producteur.
+
 ### Le trajet d'une offre, étape par étape
 
 ```text

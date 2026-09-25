@@ -1,0 +1,131 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "11.1.4",
+      "targets": [{"expr": "sum(up{job=\"tp2-python-services\"})", "legendFormat": "python services up", "refId": "A"}],
+      "title": "Python services available",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "11.1.4",
+      "targets": [{"expr": "up{job=\"postgres\"}", "legendFormat": "postgres exporter", "refId": "A"}],
+      "title": "PostgreSQL exporter",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "11.1.4",
+      "targets": [{"expr": "up{job=\"kafka\"}", "legendFormat": "kafka exporter", "refId": "A"}],
+      "title": "Kafka exporter",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "pluginVersion": "11.1.4",
+      "targets": [{"expr": "tp2_aggregator_source2_available", "legendFormat": "communes source2 available", "refId": "A"}],
+      "title": "Source 2 availability",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "barAlignment": 0, "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "never", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "axisColorMode": "text", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "pg_tp2_pipeline_counts_raw_total", "legendFormat": "raw", "refId": "A"},
+        {"expr": "pg_tp2_pipeline_counts_clean_total", "legendFormat": "clean", "refId": "B"},
+        {"expr": "pg_tp2_pipeline_counts_rejected_total", "legendFormat": "rejected", "refId": "C"}
+      ],
+      "title": "Raw vs clean vs rejected records",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "barAlignment": 0, "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "never", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "axisColorMode": "text", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 6,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "rate(tp2_ft_events_produced_total[5m])", "legendFormat": "FT produced/s", "refId": "A"},
+        {"expr": "rate(tp2_aggregator_events_total[5m])", "legendFormat": "aggregated/s", "refId": "B"},
+        {"expr": "rate(tp2_aggregator_quarantined_events_total[5m])", "legendFormat": "aggregator quarantined/s", "refId": "C"}
+      ],
+      "title": "Kafka ingestion flow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "barAlignment": 0, "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "never", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "axisColorMode": "text", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 7,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "kafka_consumergroup_lag{consumergroup=\"tp2-raw-aggregator\"}", "legendFormat": "{{topic}} lag", "refId": "A"}
+      ],
+      "title": "Kafka consumer lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "barAlignment": 0, "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "never", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "axisColorMode": "text", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 8,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"expr": "rate(pg_stat_database_xact_commit[5m])", "legendFormat": "pg commits/s", "refId": "A"},
+        {"expr": "rate(pg_stat_database_xact_rollback[5m])", "legendFormat": "pg rollbacks/s", "refId": "B"}
+      ],
+      "title": "PostgreSQL activity",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["tp2", "data-platform"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "TP2 Data Platform Overview",
+  "uid": "tp2-overview",
+  "version": 1,
+  "weekStart": ""
+}

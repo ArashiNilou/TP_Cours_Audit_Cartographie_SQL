@@ -1,0 +1,10 @@
+.git
+.gitignore
+.idea
+.venv
+__pycache__
+*.pyc
+.env
+data-lake
+scripts/output
+

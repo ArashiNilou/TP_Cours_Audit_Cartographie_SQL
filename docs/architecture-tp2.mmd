@@ -1,0 +1,23 @@
+flowchart LR
+    FT[France Travail API<br/>Offres d'emploi v2] --> Producer[Python producer<br/>polling continu]
+    Producer --> Kafka[(Kafka KRaft<br/>topic france-travail.offres.raw)]
+    Geo[Geo API gouvernementale<br/>communes INSEE] --> Communes[Communes collector<br/>periodique]
+    Communes --> LakeRawCommunes[/Data Lake<br/>raw/communes/]
+    Kafka --> Aggregator[Raw aggregator<br/>commit apres ecriture durable]
+    Aggregator --> LakeRawFT[(Volume data_lake<br/>raw/france_travail)]
+    LakeRawCommunes --> Aggregator
+    Aggregator --> LakeAgg[(Volume data_lake<br/>aggregated/offres JSONL)]
+    LakeAgg --> Spark[PySpark batch<br/>validation dedupe curation]
+    Spark --> LakeCurated[(Volume data_lake<br/>curated/offres Parquet)]
+    Spark --> LakeQuarantine[(Volume data_lake<br/>quarantine JSON)]
+    Spark --> Postgres[(PostgreSQL<br/>volume pgdata<br/>schema 3NF TP1 + audit TP2)]
+    Postgres --> Metabase[Metabase<br/>dataviz]
+    Postgres --> PgExporter[PostgreSQL exporter]
+    Kafka --> KafkaExporter[Kafka exporter]
+    Producer --> Prometheus[Prometheus]
+    Communes --> Prometheus
+    Aggregator --> Prometheus
+    PgExporter --> Prometheus
+    KafkaExporter --> Prometheus
+    Prometheus --> Grafana[Grafana<br/>volume grafana_data<br/>dashboard provisionne]
+    Kafka --> KafkaUI[Kafka UI]

@@ -10,16 +10,309 @@ services:
     ports:
       - "${PGPORT:-5432}:5432"
     volumes:
-      # Exécution automatique à la création du conteneur (schéma + données de test)
       - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./sql/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
-      # Persistance des données
+      - ./sql/04_tp2_additive.sql:/docker-entrypoint-initdb.d/04_tp2_additive.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-emploi}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.7.1
+    container_name: kafka_tp2
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9094}:9094"
+    environment:
+      CLUSTER_ID: ${KAFKA_KRAFT_CLUSTER_ID:-abcdefghijklmnopqrstuv}
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-init:
+    image: apache/kafka:3.7.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/opt/kafka/bin/kafka-topics.sh"]
+    command:
+      - --bootstrap-server
+      - kafka:9092
+      - --create
+      - --if-not-exists
+      - --topic
+      - ${FT_OFFERS_TOPIC:-france-travail.offres.raw}
+      - --partitions
+      - ${FT_OFFERS_TOPIC_PARTITIONS:-3}
+      - --replication-factor
+      - "1"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka_ui_tp2
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: tp2-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+
+  communes-collector:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: communes_collector_tp2
+    restart: unless-stopped
+    command: python -m src.tp2.communes_collector
+    environment:
+      DATA_LAKE_ROOT: /data-lake
+      METRICS_PORT: 8002
+      COMMUNES_COLLECTION_INTERVAL_SECONDS: ${COMMUNES_COLLECTION_INTERVAL_SECONDS:-86400}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - data_lake:/data-lake
+    ports:
+      - "${COMMUNES_METRICS_PORT:-8002}:8002"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/metrics', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  ft-producer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: ft_producer_tp2
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    command: python -m src.tp2.producer
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FT_OFFERS_TOPIC: ${FT_OFFERS_TOPIC:-france-travail.offres.raw}
+      FT_CLIENT_ID: ${FT_CLIENT_ID:-}
+      FT_CLIENT_SECRET: ${FT_CLIENT_SECRET:-}
+      FT_TOKEN_URL: ${FT_TOKEN_URL:-https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire}
+      FT_SCOPE: ${FT_SCOPE:-api_offresdemploiv2 o2dsoffre}
+      FT_API_BASE_URL: ${FT_API_BASE_URL:-https://api.francetravail.io/partenaire/offresdemploi/v2}
+      FT_PRODUCER_MOTS_CLES: ${FT_PRODUCER_MOTS_CLES:-data}
+      FT_PRODUCER_CODE_ROME: ${FT_PRODUCER_CODE_ROME:-}
+      FT_PRODUCER_COMMUNE: ${FT_PRODUCER_COMMUNE:-}
+      FT_PRODUCER_DEPARTEMENT: ${FT_PRODUCER_DEPARTEMENT:-}
+      FT_PRODUCER_MAX_RESULTS: ${FT_PRODUCER_MAX_RESULTS:-50}
+      FT_PRODUCER_POLL_INTERVAL_SECONDS: ${FT_PRODUCER_POLL_INTERVAL_SECONDS:-900}
+      METRICS_PORT: 8001
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${FT_PRODUCER_METRICS_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/metrics', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  raw-aggregator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    container_name: raw_aggregator_tp2
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      communes-collector:
+        condition: service_started
+    command: python -m src.tp2.aggregator
+    environment:
+      DATA_LAKE_ROOT: /data-lake
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FT_OFFERS_TOPIC: ${FT_OFFERS_TOPIC:-france-travail.offres.raw}
+      AGGREGATOR_GROUP_ID: ${AGGREGATOR_GROUP_ID:-tp2-raw-aggregator}
+      STARTUP_COMMUNES_WAIT_SECONDS: ${STARTUP_COMMUNES_WAIT_SECONDS:-60}
+      COMMUNES_REFRESH_SECONDS: ${COMMUNES_REFRESH_SECONDS:-300}
+      METRICS_PORT: 8003
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - data_lake:/data-lake
+    ports:
+      - "${AGGREGATOR_METRICS_PORT:-8003}:8003"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/metrics', timeout=2).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+
+  spark-batch:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.spark
+    container_name: spark_batch_tp2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      raw-aggregator:
+        condition: service_started
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    command:
+      - --master
+      - local[*]
+      - /app/spark/run_batch.py
+    user: "0:0"
+    environment:
+      DATA_LAKE_ROOT: /data-lake
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-emploi}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      SPARK_BATCH_INTERVAL_SECONDS: ${SPARK_BATCH_INTERVAL_SECONDS:-1800}
+      SPARK_BATCH_RUN_ONCE: ${SPARK_BATCH_RUN_ONCE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - data_lake:/data-lake
+
+  metabase:
+    image: metabase/metabase:v0.50.18
+    container_name: metabase_tp2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+
+  metabase-setup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    profiles: ["metabase-setup"]
+    depends_on:
+      metabase:
+        condition: service_healthy
+    command: python scripts/provision_metabase.py
+    environment:
+      METABASE_URL: http://metabase:3000
+      MB_ADMIN_EMAIL: ${MB_ADMIN_EMAIL:-admin@example.local}
+      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-}
+      MB_ADMIN_FIRST_NAME: ${MB_ADMIN_FIRST_NAME:-TP2}
+      MB_ADMIN_LAST_NAME: ${MB_ADMIN_LAST_NAME:-Admin}
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-emploi}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres_exporter_tp2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: postgresql://${PGUSER:-postgres}:${PGPASSWORD:-postgres}@postgres:5432/${PGDATABASE:-emploi}?sslmode=disable
+    command:
+      - --extend.query-path=/etc/postgres_exporter/queries.yaml
+    volumes:
+      - ./monitoring/postgres_exporter_queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka_exporter_tp2
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - --kafka.server=kafka:9092
+    ports:
+      - "${KAFKA_EXPORTER_PORT:-9308}:9308"
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: prometheus_tp2
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    container_name: grafana_tp2
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor_tp2
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "${CADVISOR_PORT:-8081}:8080"
 
 volumes:
   pgdata:
+  kafka_data:
+  data_lake:
+  metabase_data:
+  grafana_data:

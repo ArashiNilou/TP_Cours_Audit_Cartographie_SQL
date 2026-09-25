@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Iterable
-
-import psycopg
+from typing import TYPE_CHECKING, Any, Iterable
 
 from .api_client import FranceTravailClient
-from .connection import get_connection
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    import psycopg
 
 # Liste des 101 départements français pour le partitionnement de la collecte globale
 DEPARTEMENTS_FRANCE: list[str] = [
@@ -101,7 +101,7 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
     nom = (lieu.get("libelle") or code_insee)[:100]
     return {
         "code_insee": code_insee[:5],
-        "code_postal": (lieu.get("codePostal") or code_insee[:2] + "000")[:5],
+        "code_postal": (lieu.get("codePostal") or "00000")[:5],
         "nom_commune": nom,
         "latitude": lieu.get("latitude"),
         "longitude": lieu.get("longitude"),
@@ -182,6 +182,14 @@ def _upsert_commune(cur: psycopg.Cursor, commune: dict[str, Any]) -> None:
 def _upsert_entreprise(cur: psycopg.Cursor, entreprise: dict[str, Any]) -> int:
     if entreprise["entreprise_anonyme"]:
         cur.execute(
+            "SELECT entreprise_id FROM entreprise "
+            "WHERE entreprise_anonyme = TRUE AND raison_sociale IS NULL "
+            "ORDER BY entreprise_id LIMIT 1;"
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        cur.execute(
             "INSERT INTO entreprise (raison_sociale, entreprise_anonyme) "
             "VALUES (NULL, TRUE) RETURNING entreprise_id;"
         )
@@ -229,33 +237,42 @@ def _upsert_competence(cur: psycopg.Cursor, libelle: str) -> int:
     return cur.fetchone()[0]
 
 
-def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
+def load_offres(
+    offres_json: Iterable[dict[str, Any]],
+    *,
+    rejected_ids: list[str] | None = None,
+) -> int:
     """Charge une collection d'offres JSON dans le schéma 3NF PostgreSQL.
 
     Retourne le nombre d'offres effectivement insérées ou mises à jour.
     """
+    from .connection import get_connection
+
     nombre_traitees = 0
     with get_connection() as connection:
         with connection.cursor() as cur:
             for offre_json in offres_json:
-                offre = transform_offre(offre_json)
+                cur.execute("SAVEPOINT offre_savepoint;")
+                try:
+                    offre = transform_offre(offre_json)
 
-                if (
-                    not offre["rome_code"]
-                    or not offre["commune"]
-                    or not offre["date_publication"]
-                    or offre["type_contrat"] not in TYPES_CONTRAT_VALIDES
-                ):
-                    # Offre incomplète ou non conforme aux contraintes CHECK
-                    # du schéma : rejetée par la règle d'audit qualité
-                    # (code ROME, commune, date ou type de contrat invalides).
-                    continue
+                    if (
+                        not offre["libelle_poste"].strip()
+                        or not offre["rome_code"]
+                        or not offre["commune"]
+                        or not offre["date_publication"]
+                        or offre["type_contrat"] not in TYPES_CONTRAT_VALIDES
+                    ):
+                        if rejected_ids is not None:
+                            rejected_ids.append(str(offre_json.get("id", "inconnue")))
+                        cur.execute("RELEASE SAVEPOINT offre_savepoint;")
+                        continue
 
-                _upsert_commune(cur, offre["commune"])
-                _upsert_metier_rome(cur, offre)
-                entreprise_id = _upsert_entreprise(cur, offre["entreprise"])
+                    _upsert_commune(cur, offre["commune"])
+                    _upsert_metier_rome(cur, offre)
+                    entreprise_id = _upsert_entreprise(cur, offre["entreprise"])
 
-                cur.execute(
+                    cur.execute(
                     """
                     INSERT INTO offre (
                         source_offre_id, libelle_poste, description, date_publication,
@@ -292,24 +309,34 @@ def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
                         "code_insee": offre["commune"]["code_insee"],
                     },
                 )
-                offre_id = cur.fetchone()[0]
+                    offre_id = cur.fetchone()[0]
 
-                cur.execute(
-                    "DELETE FROM exigence_offre WHERE offre_id = %s;", (offre_id,)
-                )
-                for competence in offre["competences"]:
-                    competence_id = _upsert_competence(cur, competence["libelle"])
                     cur.execute(
-                        """
-                        INSERT INTO exigence_offre (offre_id, competence_id, statut_exigence)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (offre_id, competence_id) DO UPDATE SET
-                            statut_exigence = EXCLUDED.statut_exigence;
-                        """,
-                        (offre_id, competence_id, competence["statut_exigence"]),
+                        "DELETE FROM exigence_offre WHERE offre_id = %s;", (offre_id,)
                     )
+                    for competence in offre["competences"]:
+                        competence_id = _upsert_competence(cur, competence["libelle"])
+                        cur.execute(
+                            """
+                            INSERT INTO exigence_offre (offre_id, competence_id, statut_exigence)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (offre_id, competence_id) DO UPDATE SET
+                                statut_exigence = EXCLUDED.statut_exigence;
+                            """,
+                            (offre_id, competence_id, competence["statut_exigence"]),
+                        )
 
-                nombre_traitees += 1
+                    cur.execute("RELEASE SAVEPOINT offre_savepoint;")
+                    nombre_traitees += 1
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT offre_savepoint;")
+                    cur.execute("RELEASE SAVEPOINT offre_savepoint;")
+                    logger.exception(
+                        "Offre %s rejetée pendant le chargement PostgreSQL",
+                        offre_json.get("id", "inconnue"),
+                    )
+                    if rejected_ids is not None:
+                        rejected_ids.append(str(offre_json.get("id", "inconnue")))
 
         connection.commit()
     return nombre_traitees
@@ -393,4 +420,3 @@ def sync_all_departements(
             print(f"[{index:03d}/{len(deps):03d}] Dépt {dep:3s} : Erreur ({err})")
 
     return total_charges
-

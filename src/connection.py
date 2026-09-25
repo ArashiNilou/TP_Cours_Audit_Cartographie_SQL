@@ -12,11 +12,14 @@ import psycopg
 
 def get_connection() -> psycopg.Connection:
     """Ouvre une connexion vers la base PostgreSQL cible."""
-    return psycopg.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=os.getenv("PGPORT", "5432"),
-        dbname=os.getenv("PGDATABASE", "emploi"),
-        user=os.getenv("PGUSER", "postgres"),
-        password=os.getenv("PGPASSWORD"),
-        connect_timeout=5,
-    )
+    connection_parameters = {
+        "host": os.getenv("PGHOST", "localhost"),
+        "port": os.getenv("PGPORT", "5432"),
+        "dbname": os.getenv("PGDATABASE", "emploi"),
+        "user": os.getenv("PGUSER", "postgres"),
+        "connect_timeout": 5,
+    }
+    password = os.getenv("PGPASSWORD")
+    if password:
+        connection_parameters["password"] = password
+    return psycopg.connect(**connection_parameters)

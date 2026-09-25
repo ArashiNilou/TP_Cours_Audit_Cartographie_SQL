@@ -1,10 +1,4 @@
-"""Client OAuth2 pour l'API « Offres d'emploi v2 » de France Travail.
-
-Authentification : flux "client_credentials" auprès de l'endpoint
-FT_TOKEN_URL, avec FT_CLIENT_ID / FT_CLIENT_SECRET / FT_SCOPE lus depuis les
-variables d'environnement (voir .env.example). Aucun secret n'est codé en
-dur dans ce module.
-"""
+"""Client OAuth2 pour l'API Offres d'emploi v2 de France Travail."""
 
 from __future__ import annotations
 
@@ -30,24 +24,22 @@ DEFAULT_API_BASE_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2
 DEFAULT_SCOPE = "api_offresdemploiv2 o2dsoffre"
 
 
-
 class FranceTravailAuthError(RuntimeError):
-    """Levée lorsque l'obtention du jeton d'accès échoue."""
+    """Levee lorsque l'obtention du jeton d'acces echoue."""
 
 
 class FranceTravailApiError(RuntimeError):
-    """Levée lorsqu'un appel à l'API Offres d'emploi échoue."""
+    """Levee lorsqu'un appel a l'API Offres d'emploi echoue."""
 
 
 @dataclass
 class AccessToken:
-    """Jeton d'accès OAuth2 et sa date d'expiration (timestamp epoch)."""
+    """Jeton d'acces OAuth2 et sa date d'expiration."""
 
     value: str
     expires_at: float
 
     def is_valid(self, margin_seconds: int = 30) -> bool:
-        """Indique si le jeton est encore valide, avec une marge de sécurité."""
         return time.time() < (self.expires_at - margin_seconds)
 
 
@@ -73,12 +65,11 @@ class FranceTravailClient:
 
         if not self.client_id or not self.client_secret:
             raise FranceTravailAuthError(
-                "FT_CLIENT_ID et FT_CLIENT_SECRET doivent être définis "
+                "FT_CLIENT_ID et FT_CLIENT_SECRET doivent etre definis "
                 "(variables d'environnement ou fichier .env)."
             )
 
     def _fetch_token(self) -> AccessToken:
-        """Demande un nouveau jeton d'accès via le flux client_credentials."""
         response = requests.post(
             self.token_url,
             data={
@@ -92,19 +83,22 @@ class FranceTravailClient:
         )
         if response.status_code != 200:
             raise FranceTravailAuthError(
-                f"Échec de l'authentification OAuth2 "
+                f"Echec de l'authentification OAuth2 "
                 f"(HTTP {response.status_code}) : {response.text[:300]}"
             )
         payload = response.json()
-        access_token = payload["access_token"]
-        expires_in = payload.get("expires_in", 1499)
-        return AccessToken(value=access_token, expires_at=time.time() + expires_in)
+        return AccessToken(
+            value=payload["access_token"],
+            expires_at=time.time() + payload.get("expires_in", 1499),
+        )
 
     def _get_token(self) -> str:
-        """Retourne un jeton d'accès valide, en le renouvelant si nécessaire."""
         if self._token is None or not self._token.is_valid():
             self._token = self._fetch_token()
         return self._token.value
+
+    def _authorization_header(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._get_token()}"}
 
     def search_offres(
         self,
@@ -114,11 +108,6 @@ class FranceTravailClient:
         departement: str | None = None,
         range_: str = "0-49",
     ) -> dict[str, Any]:
-        """Recherche des offres d'emploi via l'endpoint /offres/search.
-
-        Retourne le JSON décodé de la réponse (clé "resultats" attendue)
-        ainsi que le "total" d'offres déduit du header Content-Range si présent.
-        """
         params: dict[str, str] = {"range": range_}
         if mots_cles:
             params["motsCles"] = mots_cles
@@ -132,7 +121,7 @@ class FranceTravailClient:
         response = requests.get(
             f"{self.api_base_url}/offres/search",
             params=params,
-            headers={"Authorization": f"Bearer {self._get_token()}"},
+            headers=self._authorization_header(),
             timeout=30,
         )
         if response.status_code in (204, 416) or not response.content:
@@ -140,7 +129,7 @@ class FranceTravailClient:
 
         if response.status_code not in (200, 206):
             raise FranceTravailApiError(
-                f"Échec de la recherche d'offres "
+                f"Echec de la recherche d'offres "
                 f"(HTTP {response.status_code}) : {response.text[:300]}"
             )
 
@@ -160,10 +149,6 @@ class FranceTravailClient:
         max_results: int | None = None,
         delay_seconds: float = 0.25,
     ) -> list[dict[str, Any]]:
-        """Parcourt automatiquement les pages d'une recherche par tranche de 150.
-
-        S'arrête au plafond de 1149 offres de France Travail (ou à max_results).
-        """
         offres: list[dict[str, Any]] = []
         start = 0
         batch_step = 149
@@ -175,22 +160,18 @@ class FranceTravailClient:
             remaining = (max_results - len(offres) - 1) if max_results else batch_step
             step = min(batch_step, max(0, remaining))
             end = min(1148, start + step)
-            range_str = f"{start}-{end}"
-
             payload = self.search_offres(
                 mots_cles=mots_cles,
                 code_rome=code_rome,
                 commune=commune,
                 departement=departement,
-                range_=range_str,
+                range_=f"{start}-{end}",
             )
             lot = payload.get("resultats", [])
             if not lot:
                 break
 
             offres.extend(lot)
-
-            # Si le lot reçu est inférieur à la taille de tranche demandée, on a atteint la fin
             if len(lot) < (end - start + 1):
                 break
 
@@ -200,17 +181,15 @@ class FranceTravailClient:
 
         return offres
 
-
     def get_offre(self, offre_id: str) -> dict[str, Any]:
-        """Récupère une offre unique via l'endpoint /offres/{id}."""
         response = requests.get(
             f"{self.api_base_url}/offres/{offre_id}",
-            headers={"Authorization": f"Bearer {self._get_token()}"},
+            headers=self._authorization_header(),
             timeout=30,
         )
         if response.status_code != 200:
             raise FranceTravailApiError(
-                f"Échec de la récupération de l'offre {offre_id} "
+                f"Echec de la recuperation de l'offre {offre_id} "
                 f"(HTTP {response.status_code}) : {response.text[:300]}"
             )
         return response.json()

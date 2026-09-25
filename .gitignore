@@ -34,6 +34,15 @@ desktop.ini
 
 # --- Sorties des scripts utilitaires (donnees API brutes, artefacts locaux) ---
 scripts/output/
+data-lake/
+data_lake/
+spark-warehouse/
+metabase-data/
+grafana-data/
+
+# --- Artefacts analytiques volumineux ---
+*.parquet
+*.jsonl
 
 # --- Exports de bases de données ---
 *.sql.bak

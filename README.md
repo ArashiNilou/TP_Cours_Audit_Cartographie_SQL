@@ -5,22 +5,31 @@
 ```text
 TP_Cours_Audit_Cartographie_SQL/
 ├── README.md                 # Dossier complet du TP (ce fichier)
-├── docker-compose.yml        # Orchestration PostgreSQL avec initialisation automatique
-├── requirements.txt          # Dépendances Python (psycopg, requests, python-dotenv)
+├── docker-compose.yml        # Plateforme TP2 complète orchestrée par Docker
+├── docker/                   # Images Python et Spark
+├── monitoring/               # Prometheus et provisioning Grafana
+├── requirements.txt          # Dépendances des services Python
+├── requirements-spark.txt    # Dépendances du traitement PySpark
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
 │   ├── mcd.mmd               # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
 │   ├── mld.mmd               # MLD Merise (diagramme Mermaid, avec FK et type SQL)
+│   ├── architecture-tp2.mmd  # Architecture complète du pipeline TP2
+│   ├── dictionnaire_donnees.md # Dictionnaire autonome TP1/TP2
 │   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
 ├── sql/
 │   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index
 │   ├── 02_seed.sql           # Jeu de données de test cohérent
-│   └── 03_queries.sql        # Requêtes d'analyse (tableau de bord RH)
+│   ├── 03_queries.sql        # Requêtes d'analyse (tableau de bord RH)
+│   └── 04_tp2_additive.sql   # Audit, enrichissement et vues TP2
 ├── src/
 │   ├── connection.py         # Connexion PostgreSQL par variables d'environnement
 │   ├── schema.py             # Exécution des scripts SQL depuis Python
 │   ├── api_client.py         # Client OAuth2 pour l'API France Travail (offres v2)
-│   └── ingest.py             # Transformation JSON API -> lignes 3NF + chargement
+│   ├── ingest.py             # Transformation JSON API -> lignes 3NF + chargement
+│   └── tp2/                  # Producer, collecte Geo, agrégation, Spark
+├── spark/
+│   └── run_batch.py          # Point d'entrée spark-submit
 ├── scripts/
 │   ├── inspect_offre.py      # Utilitaire dev : dump JSON brut d'une offre (scripts/output/)
 │   └── output/               # Artefacts JSON récupérés localement (non versionnés)
@@ -70,7 +79,7 @@ bassin d'emploi ?
 * Livrer un script DDL PostgreSQL complet, avec contraintes, index, données
   de test et requêtes d'analyse orientées tableau de bord RH.
 
-## 2. Source de données réelle
+## 2. Source de données réelle du TP1
 
 | Nom | Organisation | URL | Format | Nature | Description métier |
 |---|---|---|---|---|---|
@@ -105,6 +114,10 @@ par le chargement d'un fichier CSV externe.
   nomenclature officielle des 14 grands domaines (`resolve_domaine_professionnel`).
 
 ## 3. Dictionnaire de données
+
+Une version autonome de ce dictionnaire, incluant les champs d'audit et
+d'enrichissement du TP2, est disponible dans
+[`docs/dictionnaire_donnees.md`](docs/dictionnaire_donnees.md).
 
 | Champ | Description fonctionnelle | Type SQL cible | Exemple de valeur | Contraintes & règle métier |
 |---|---|---|---|---|
@@ -524,3 +537,126 @@ et sauvegarde une offre dans `scripts/output/` (dossier ignoré par git) :
 python scripts/inspect_offre.py               # première offre trouvée (motsCles="data")
 python scripts/inspect_offre.py 214JMGC       # offre précise par identifiant
 ```
+
+## 8. TP2 - Plateforme data temps quasi réel
+
+Le TP2 conserve le schéma 3NF et les commandes TP1, puis ajoute une chaîne
+Docker orchestrée autour de Kafka, d'un Data Lake partagé, d'un batch PySpark,
+de PostgreSQL, de Metabase et d'une supervision Prometheus/Grafana.
+
+### Sources
+
+| Source | Rôle | Authentification | Destination initiale |
+|---|---|---|---|
+| France Travail API `Offres d'emploi v2` | Source 1 événementielle : offres pollées en continu par `src.tp2.producer` puis publiées dans Kafka. | OAuth2 client credentials via `FT_CLIENT_ID` / `FT_CLIENT_SECRET`. | Topic Kafka `france-travail.offres.raw`. |
+| Geo API gouvernementale `https://geo.api.gouv.fr/communes?fields=nom,code,codesPostaux,centre&format=json` | Source 2 de référence officielle des communes, complémentaire et jointe par code INSEE. | Aucune. | `/data-lake/raw/communes/` et pointeur `_latest.json`. |
+
+### Architecture et flux
+
+Le diagramme Mermaid autonome est disponible dans
+[`docs/architecture-tp2.mmd`](docs/architecture-tp2.mmd).
+
+1. `ft-producer` interroge périodiquement France Travail et émet des
+   événements contractuels `tp2.offer.v1` dans Kafka.
+2. `communes-collector` collecte périodiquement le référentiel officiel des
+   communes dans le Data Lake.
+3. `raw-aggregator` consomme Kafka avec `enable_auto_commit=false`, écrit
+   d'abord l'événement brut immutable dans `/data-lake/raw/france_travail/`,
+   enrichit par code INSEE avec le dernier référentiel communes disponible,
+   écrit un JSONL partitionné par date dans `/data-lake/aggregated/offres/`,
+   puis commit l'offset Kafka uniquement après ces écritures durables. Si la
+   source 2 manque au démarrage, les lignes sont explicitement marquées
+   `commune_reference_status = "missing_source2"`.
+4. `spark-batch` lit les JSONL agrégés, valide les champs obligatoires, caste
+   et déduplique par identifiant d'offre source, écrit le Parquet curé dans
+   `/data-lake/curated/offres/`, écrit les rejets dans
+   `/data-lake/quarantine/`, puis réutilise les transformations et upserts TP1
+   (`src.ingest.load_offres`) pour charger les tables 3NF PostgreSQL. Les
+   valeurs officielles Geo (nom, code postal et coordonnées) remplacent les
+   valeurs API lorsqu'une correspondance existe ; le résultat de jointure est
+   auditable dans `tp2_offre_enrichment`.
+5. Chaque run Spark alimente la table additive `tp2_pipeline_run` avec
+   `raw_count`, `clean_count` et `rejected_count`. Le script TP2
+   [`sql/04_tp2_additive.sql`](sql/04_tp2_additive.sql) est non destructif et
+   ne rejoue jamais le DDL `DROP` de `sql/01_schema.sql` pendant les batchs.
+
+### Démarrage
+
+Copier `.env.example` vers `.env`, renseigner au minimum les variables
+PostgreSQL et, pour produire de vraies offres, `FT_CLIENT_ID` et
+`FT_CLIENT_SECRET`. Sans identifiants France Travail, la plateforme démarre et
+reste observable, mais aucun événement source 1 réel n'est produit.
+
+```bash
+docker compose up -d --build
+```
+
+URLs locales par défaut :
+
+| Service | URL |
+|---|---|
+| Kafka UI | <http://localhost:8080> |
+| Metabase | <http://localhost:3000> |
+| Prometheus | <http://localhost:9090> |
+| Grafana | <http://localhost:3001> |
+| Metrics producteur France Travail | <http://localhost:8001/metrics> |
+| Metrics collecteur communes | <http://localhost:8002/metrics> |
+| Metrics agrégateur | <http://localhost:8003/metrics> |
+
+Metabase est provisionnable avec le profil dédié après avoir défini
+`MB_ADMIN_PASSWORD` dans `.env` :
+
+```bash
+docker compose --profile metabase-setup up metabase-setup
+```
+
+Le provisionnement crée la connexion PostgreSQL, quatre questions SQL et le
+dashboard métier **TP2 - Marché de l'emploi** (contrats, compétences,
+territoires et qualité Raw/Clean).
+
+### Supervision
+
+Prometheus collecte les métriques des services Python, de PostgreSQL, de
+Kafka et, si activé, de cAdvisor. Grafana provisionne automatiquement le
+dashboard `TP2 Data Platform Overview`, qui couvre la disponibilité des
+services, Kafka, PostgreSQL, la disponibilité de la source communes et les
+volumes raw / clean / rejected issus de la vue `tp2_pipeline_latest_counts`.
+
+cAdvisor est démarré avec la plateforme et expose les métriques CPU/mémoire
+des conteneurs. Sur un environnement qui interdit ses montages bas niveau,
+il peut être désactivé avec `docker compose stop cadvisor` sans interrompre
+le pipeline de données.
+
+### Démo courte
+
+1. Démarrer la plateforme : `docker compose up -d --build`.
+2. Vérifier le topic dans Kafka UI et la disponibilité des services dans
+   Grafana.
+3. Avec des identifiants France Travail, attendre un cycle producteur ou
+   réduire `FT_PRODUCER_POLL_INTERVAL_SECONDS` / `FT_PRODUCER_MAX_RESULTS`
+   dans `.env` pour une démonstration rapide.
+4. Forcer un batch unique si besoin :
+   `docker compose run --rm -e SPARK_BATCH_RUN_ONCE=true spark-batch`.
+5. Consulter les tables `offre`, `commune`, `competence`,
+   `exigence_offre`, la vue `tp2_dashboard_offres` et la table
+   `tp2_pipeline_run` dans PostgreSQL ou Metabase.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests -t . -v
+docker compose config --quiet
+```
+
+### Réinitialisation
+
+Pour repartir de zéro en environnement Docker local :
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+Cette commande supprime les volumes nommés PostgreSQL, Kafka, Data Lake,
+Metabase et Grafana. Les données brutes ou générées localement restent
+ignorées par git (`data-lake/`, `*.jsonl`, `*.parquet`, `scripts/output/`).

@@ -1,9 +1,9 @@
 # TP2 - Pipeline Data Engineer : Cartographie de l'Emploi en France
 
-## 📋 Description du Projet
+##  Description du Projet
 Ce projet est un pipeline complet de Data Engineering visant à agréger et analyser les offres d'emploi en France provenant de deux sources distinctes (France Travail et HelloWork), dans le respect des contraintes d'une architecture Big Data moderne.
 
-### 🏗 Architecture
+###  Architecture
 L'architecture est entièrement conteneurisée via Docker et s'articule autour des composants suivants :
 1. **Sources (Ingestion)** :
    - `api/` : Scripts de consommation de l'API France Travail.
@@ -24,7 +24,7 @@ L'architecture est entièrement conteneurisée via Docker et s'articule autour d
    - `Prometheus` : Scraping et stockage des métriques.
    - `Grafana` : Tableaux de bord d'exploitation technique.
 
-## 🚀 Déploiement et Lancement
+##  Déploiement et Lancement
 
 ### 1. Démarrer l'infrastructure
 Lancer l'ensemble des conteneurs en arrière-plan :
@@ -60,7 +60,7 @@ Transférer les données du Data Lake vers le Data Warehouse :
 * **Grafana (Monitoring Infra)** : `http://localhost:3000` (admin/admin)
 * **Kafka UI** : `http://localhost:8080`
 
-## ✅ Critères de Réussite Valides
+##  Critères de Réussite Valides
 - [x] Deux sources complémentaires intégrées
 - [x] Le scraper web alimente Kafka en temps réel
 - [x] PySpark produit les données propres

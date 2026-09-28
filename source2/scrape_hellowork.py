@@ -10,9 +10,9 @@ from confluent_kafka import Producer
 def delivery_report(err, msg):
     """ Callback appelé à chaque message envoyé à Kafka pour confirmer le statut. """
     if err is not None:
-        print(f"❌ Échec de l'envoi du message à Kafka : {err}")
+        print(f" Échec de l'envoi du message à Kafka : {err}")
     else:
-        print(f"✅ Offre envoyée sur le topic {msg.topic()} [Partition: {msg.partition()}]")
+        print(f" Offre envoyée sur le topic {msg.topic()} [Partition: {msg.partition()}]")
 
 async def scrape_hellowork(query: str, location: str, max_pages: int = 1):
     """

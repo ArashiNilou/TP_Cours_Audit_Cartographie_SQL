@@ -20,7 +20,7 @@ __pycache__/
 
 # --- JetBrains / PyCharm ---
 .idea/
-
+.java17/
 # --- Systèmes d'exploitation ---
 .DS_Store
 Thumbs.db

@@ -16,7 +16,7 @@ from typing import Any, Iterable
 import psycopg
 
 from .api_client import FranceTravailClient
-from .connection import get_connection
+from postgres.connection import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -229,90 +229,32 @@ def _upsert_competence(cur: psycopg.Cursor, libelle: str) -> int:
     return cur.fetchone()[0]
 
 
+
+from pymongo import MongoClient
+
 def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
-    """Charge une collection d'offres JSON dans le schéma 3NF PostgreSQL.
-
-    Retourne le nombre d'offres effectivement insérées ou mises à jour.
-    """
-    nombre_traitees = 0
-    with get_connection() as connection:
-        with connection.cursor() as cur:
-            for offre_json in offres_json:
-                offre = transform_offre(offre_json)
-
-                if (
-                    not offre["rome_code"]
-                    or not offre["commune"]
-                    or not offre["date_publication"]
-                    or offre["type_contrat"] not in TYPES_CONTRAT_VALIDES
-                ):
-                    # Offre incomplète ou non conforme aux contraintes CHECK
-                    # du schéma : rejetée par la règle d'audit qualité
-                    # (code ROME, commune, date ou type de contrat invalides).
-                    continue
-
-                _upsert_commune(cur, offre["commune"])
-                _upsert_metier_rome(cur, offre)
-                entreprise_id = _upsert_entreprise(cur, offre["entreprise"])
-
-                cur.execute(
-                    """
-                    INSERT INTO offre (
-                        source_offre_id, libelle_poste, description, date_publication,
-                        type_contrat, duree_travail, salaire_brut_annuel_estime,
-                        rome_code, entreprise_id, code_insee
-                    ) VALUES (
-                        %(source_offre_id)s, %(libelle_poste)s, %(description)s,
-                        %(date_publication)s, %(type_contrat)s, %(duree_travail)s,
-                        %(salaire_brut_annuel_estime)s, %(rome_code)s,
-                        %(entreprise_id)s, %(code_insee)s
-                    )
-                    ON CONFLICT (source_offre_id) DO UPDATE SET
-                        libelle_poste = EXCLUDED.libelle_poste,
-                        description = EXCLUDED.description,
-                        date_publication = EXCLUDED.date_publication,
-                        type_contrat = EXCLUDED.type_contrat,
-                        duree_travail = EXCLUDED.duree_travail,
-                        salaire_brut_annuel_estime = EXCLUDED.salaire_brut_annuel_estime,
-                        rome_code = EXCLUDED.rome_code,
-                        entreprise_id = EXCLUDED.entreprise_id,
-                        code_insee = EXCLUDED.code_insee
-                    RETURNING offre_id;
-                    """,
-                    {
-                        "source_offre_id": offre["source_offre_id"],
-                        "libelle_poste": offre["libelle_poste"],
-                        "description": offre["description"],
-                        "date_publication": offre["date_publication"],
-                        "type_contrat": offre["type_contrat"],
-                        "duree_travail": offre["duree_travail"],
-                        "salaire_brut_annuel_estime": offre["salaire_brut_annuel_estime"],
-                        "rome_code": offre["rome_code"],
-                        "entreprise_id": entreprise_id,
-                        "code_insee": offre["commune"]["code_insee"],
-                    },
-                )
-                offre_id = cur.fetchone()[0]
-
-                cur.execute(
-                    "DELETE FROM exigence_offre WHERE offre_id = %s;", (offre_id,)
-                )
-                for competence in offre["competences"]:
-                    competence_id = _upsert_competence(cur, competence["libelle"])
-                    cur.execute(
-                        """
-                        INSERT INTO exigence_offre (offre_id, competence_id, statut_exigence)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (offre_id, competence_id) DO UPDATE SET
-                            statut_exigence = EXCLUDED.statut_exigence;
-                        """,
-                        (offre_id, competence_id, competence["statut_exigence"]),
-                    )
-
-                nombre_traitees += 1
-
-        connection.commit()
-    return nombre_traitees
+    """Charge une collection d'offres JSON brute dans MongoDB (Data Lake)."""
+    if not offres_json:
+        return 0
+        
+    client = MongoClient("mongodb://localhost:27017/")
+    db = client["emploi_datalake"]
+    collection = db["raw_jobs"]
+    
+    docs_to_insert = []
+    for offre in offres_json:
+        # On injecte la metadata "source"
+        offre["source"] = "france_travail"
+        
+        # On s'assure qu'on ne duplique pas bêtement (utiliser l'id de France Travail)
+        # Mais pour le datalake pur, insert_one ou insert_many basique suffit.
+        docs_to_insert.append(offre)
+        
+    if docs_to_insert:
+        collection.insert_many(docs_to_insert)
+        
+    client.close()
+    return len(docs_to_insert)
 
 
 def sync_from_api(

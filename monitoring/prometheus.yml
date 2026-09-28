@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: 'postgres_exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'raw_clean_exporter'
+    static_configs:
+      - targets: ['raw-clean-exporter:8000']

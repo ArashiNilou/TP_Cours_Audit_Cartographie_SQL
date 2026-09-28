@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from .connection import get_connection
+from postgres.connection import get_connection
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
 

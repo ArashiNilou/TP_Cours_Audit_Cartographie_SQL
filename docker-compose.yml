@@ -11,8 +11,8 @@ services:
       - "${PGPORT:-5432}:5432"
     volumes:
       # Exécution automatique à la création du conteneur (schéma + données de test)
-      - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./sql/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - ./postgres/sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./postgres/sql/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
       # Persistance des données
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,5 +21,114 @@ services:
       timeout: 5s
       retries: 5
 
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper_emploi
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka_emploi
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka_ui_emploi
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "Emploi-Cluster"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: 'true'
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus_emploi
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana_emploi
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor_emploi
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgres_exporter_emploi
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/emploi?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  raw-clean-exporter:
+    build:
+      context: ./monitoring
+    container_name: raw_clean_exporter_emploi
+    environment:
+      MONGO_URI: "mongodb://mongodb:27017/"
+      PG_URI: "postgresql://postgres:postgres@postgres:5432/emploi"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - mongodb
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  mongodata:
+

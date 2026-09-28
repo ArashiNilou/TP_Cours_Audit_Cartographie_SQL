@@ -14,9 +14,9 @@ import argparse
 
 from dotenv import load_dotenv
 
-from src.connection import get_connection
-from src.ingest import sync_all_departements, sync_from_api
-from src.schema import initialize_database
+from postgres.connection import get_connection
+from api.ingest import sync_all_departements, sync_from_api
+from postgres.schema import initialize_database
 
 load_dotenv()
 

@@ -10,9 +10,9 @@ services:
     ports:
       - "${PGPORT:-5432}:5432"
     volumes:
-      - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./sql/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
-      - ./sql/04_tp2_additive.sql:/docker-entrypoint-initdb.d/04_tp2_additive.sql:ro
+      - ./database/schema/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/schema/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - ./database/schema/03_pipeline_schema.sql:/docker-entrypoint-initdb.d/03_pipeline_schema.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-emploi}"]
@@ -22,7 +22,7 @@ services:
 
   kafka:
     image: apache/kafka:3.7.1
-    container_name: kafka_tp2
+    container_name: kafka_emploi
     restart: unless-stopped
     ports:
       - "${KAFKA_EXTERNAL_PORT:-9094}:9094"
@@ -68,13 +68,13 @@ services:
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
-    container_name: kafka_ui_tp2
+    container_name: kafka_ui_emploi
     restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
     environment:
-      KAFKA_CLUSTERS_0_NAME: tp2-local
+      KAFKA_CLUSTERS_0_NAME: emploi-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     ports:
       - "${KAFKA_UI_PORT:-8080}:8080"
@@ -82,10 +82,10 @@ services:
   communes-collector:
     build:
       context: .
-      dockerfile: docker/Dockerfile.python
-    container_name: communes_collector_tp2
+      dockerfile: infra/docker/Dockerfile.python
+    container_name: communes_collector_emploi
     restart: unless-stopped
-    command: python -m src.tp2.communes_collector
+    command: python -m src.emploi_pipeline.communes_collector
     environment:
       DATA_LAKE_ROOT: /data-lake
       METRICS_PORT: 8002
@@ -104,15 +104,15 @@ services:
   ft-producer:
     build:
       context: .
-      dockerfile: docker/Dockerfile.python
-    container_name: ft_producer_tp2
+      dockerfile: infra/docker/Dockerfile.python
+    container_name: ft_producer_emploi
     restart: unless-stopped
     depends_on:
       kafka:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-    command: python -m src.tp2.producer
+    command: python -m src.emploi_pipeline.producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       FT_OFFERS_TOPIC: ${FT_OFFERS_TOPIC:-france-travail.offres.raw}
@@ -142,8 +142,8 @@ services:
   raw-aggregator:
     build:
       context: .
-      dockerfile: docker/Dockerfile.python
-    container_name: raw_aggregator_tp2
+      dockerfile: infra/docker/Dockerfile.python
+    container_name: raw_aggregator_emploi
     restart: unless-stopped
     depends_on:
       kafka:
@@ -152,7 +152,7 @@ services:
         condition: service_completed_successfully
       communes-collector:
         condition: service_started
-    command: python -m src.tp2.aggregator
+    command: python -m src.emploi_pipeline.aggregator
     environment:
       DATA_LAKE_ROOT: /data-lake
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -175,8 +175,8 @@ services:
   spark-batch:
     build:
       context: .
-      dockerfile: docker/Dockerfile.spark
-    container_name: spark_batch_tp2
+      dockerfile: infra/docker/Dockerfile.spark
+    container_name: spark_batch_emploi
     restart: unless-stopped
     depends_on:
       postgres:
@@ -187,7 +187,7 @@ services:
     command:
       - --master
       - local[*]
-      - /app/spark/run_batch.py
+      - /app/scripts/run_pipeline_batch.py
     user: "0:0"
     environment:
       DATA_LAKE_ROOT: /data-lake
@@ -204,7 +204,7 @@ services:
 
   metabase:
     image: metabase/metabase:v0.50.18
-    container_name: metabase_tp2
+    container_name: metabase_emploi
     restart: unless-stopped
     depends_on:
       postgres:
@@ -223,8 +223,8 @@ services:
 
   dataviz:
     build:
-      context: ./dataviz
-    container_name: dataviz_plotly_tp2
+      context: ./apps/dataviz
+    container_name: dataviz_emploi
     restart: unless-stopped
     depends_on:
       postgres:
@@ -247,7 +247,7 @@ services:
   metabase-setup:
     build:
       context: .
-      dockerfile: docker/Dockerfile.python
+      dockerfile: infra/docker/Dockerfile.python
     profiles: ["metabase-setup"]
     depends_on:
       metabase:
@@ -267,7 +267,7 @@ services:
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
-    container_name: postgres_exporter_tp2
+    container_name: postgres_exporter_emploi
     restart: unless-stopped
     depends_on:
       postgres:
@@ -277,13 +277,13 @@ services:
     command:
       - --extend.query-path=/etc/postgres_exporter/queries.yaml
     volumes:
-      - ./monitoring/postgres_exporter_queries.yaml:/etc/postgres_exporter/queries.yaml:ro
+      - ./infra/monitoring/postgres_exporter_queries.yaml:/etc/postgres_exporter/queries.yaml:ro
     ports:
       - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.7.0
-    container_name: kafka_exporter_tp2
+    container_name: kafka_exporter_emploi
     restart: unless-stopped
     depends_on:
       kafka:
@@ -295,16 +295,16 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.53.1
-    container_name: prometheus_tp2
+    container_name: prometheus_emploi
     restart: unless-stopped
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
 
   grafana:
     image: grafana/grafana:11.1.4
-    container_name: grafana_tp2
+    container_name: grafana_emploi
     restart: unless-stopped
     depends_on:
       prometheus:
@@ -315,14 +315,14 @@ services:
       GF_USERS_DEFAULT_THEME: light
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
-    container_name: cadvisor_tp2
+    container_name: cadvisor_emploi
     restart: unless-stopped
     privileged: true
     devices:

@@ -67,7 +67,7 @@ def setup_if_needed() -> str:
             "last_name": os.getenv("MB_ADMIN_LAST_NAME", "Admin"),
             "password": password,
         },
-        "prefs": {"site_name": "TP2 Data Platform", "allow_tracking": False},
+        "prefs": {"site_name": "Plateforme Data Emploi", "allow_tracking": False},
         "database": _postgres_database_payload(),
     }
     response = _request("POST", "/api/setup", json=payload)
@@ -77,7 +77,7 @@ def setup_if_needed() -> str:
 def _postgres_database_payload() -> dict[str, Any]:
     return {
         "engine": "postgres",
-        "name": "TP2 PostgreSQL",
+        "name": "PostgreSQL Emploi",
         "details": {
             "host": os.getenv("PGHOST", "postgres"),
             "port": int(os.getenv("PGPORT", "5432")),
@@ -97,7 +97,7 @@ def ensure_database(token: str) -> int:
     databases = _request("GET", "/api/database", headers=headers).json()
     existing = databases.get("data", databases if isinstance(databases, list) else [])
     for database in existing:
-        if database.get("name") == "TP2 PostgreSQL":
+        if database.get("name") == "PostgreSQL Emploi":
             return int(database["id"])
     response = _request(
         "POST",
@@ -148,7 +148,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
         _ensure_card(
             token,
             database_id,
-            name="TP2 - Offres par type de contrat",
+            name="Offres par type de contrat",
             query=(
                 "SELECT type_contrat, COUNT(*) AS nombre_offres "
                 "FROM tp2_dashboard_offres GROUP BY type_contrat "
@@ -159,7 +159,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
         _ensure_card(
             token,
             database_id,
-            name="TP2 - Top compétences recherchées",
+            name="Top compétences recherchées",
             query=(
                 "SELECT c.libelle_competence, COUNT(*) AS occurrences "
                 "FROM exigence_offre eo JOIN competence c USING (competence_id) "
@@ -170,7 +170,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
         _ensure_card(
             token,
             database_id,
-            name="TP2 - Offres par commune",
+            name="Offres par commune",
             query=(
                 "SELECT COALESCE(geo_nom_commune, nom_commune) AS commune, "
                 "COUNT(*) AS nombre_offres FROM tp2_dashboard_offres "
@@ -181,7 +181,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
         _ensure_card(
             token,
             database_id,
-            name="TP2 - Qualité Raw vs Clean",
+            name="Qualité Raw vs Clean",
             query="SELECT raw_total, clean_total, rejected_total FROM tp2_pipeline_latest_counts",
             display="table",
         ),
@@ -190,7 +190,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
     dashboards_response = _request("GET", "/api/dashboard", headers=headers).json()
     dashboards = dashboards_response.get("data", dashboards_response)
     dashboard = next(
-        (item for item in dashboards if item.get("name") == "TP2 - Marché de l'emploi"),
+        (item for item in dashboards if item.get("name") == "Marché de l'emploi"),
         None,
     )
     if dashboard is None:
@@ -199,7 +199,7 @@ def ensure_business_dashboard(token: str, database_id: int) -> None:
             "/api/dashboard",
             headers=headers,
             json={
-                "name": "TP2 - Marché de l'emploi",
+                "name": "Marché de l'emploi",
                 "description": "Contrats, compétences, territoires et qualité du pipeline.",
             },
         ).json()
@@ -224,7 +224,7 @@ def main() -> None:
     token = setup_if_needed()
     database_id = ensure_database(token)
     ensure_business_dashboard(token, database_id)
-    print("Metabase provisioned with PostgreSQL and the TP2 business dashboard")
+    print("Metabase provisioned with PostgreSQL and the employment dashboard")
 
 
 if __name__ == "__main__":

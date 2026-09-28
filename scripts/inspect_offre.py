@@ -1,9 +1,9 @@
 """Utilitaire de développement : récupère une offre France Travail brute
 et l'enregistre en JSON, pour inspecter manuellement sa structure et ses
-champs disponibles (utile avant d'étendre src/ingest.py).
+champs disponibles (utile avant d'étendre src/emploi_pipeline/ingest.py).
 
-Ce script réutilise src/api_client.py : il n'implémente aucune logique
-d'authentification propre.
+Ce script réutilise src/emploi_pipeline/api_client.py : il n'implémente
+aucune logique d'authentification propre.
 
 Usage :
     python scripts/inspect_offre.py               # première offre trouvée (motsCles="data")
@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.api_client import (  # noqa: E402
+from src.emploi_pipeline.api_client import (  # noqa: E402
     FranceTravailApiError,
     FranceTravailAuthError,
     FranceTravailClient,

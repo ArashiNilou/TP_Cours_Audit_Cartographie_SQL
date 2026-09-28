@@ -1,4 +1,4 @@
-# TP - Audit, cartographie et modélisation de données : tensions sur les compétences numériques
+# Plateforme de données sur les offres d'emploi
 
 ## Sommaire
 
@@ -9,7 +9,7 @@
   * [Contexte](#contexte)
   * [Problématique](#problématique)
   * [Objectif](#objectif)
-* [2. Source de données réelle du TP1](#2-source-de-données-réelle-du-tp1)
+* [2. Sources de données réelles](#2-sources-de-données-réelles)
   * [Points d'audit de la source](#points-daudit-de-la-source)
 * [3. Dictionnaire de données](#3-dictionnaire-de-données)
 * [4. Identification des entités, cardinalités et justification](#4-identification-des-entités-cardinalités-et-justification)
@@ -31,7 +31,7 @@
   * [3. Initialiser le schéma et les données de test](#3-initialiser-le-schéma-et-les-données-de-test)
   * [4. Ingérer des offres réelles depuis l'API France Travail](#4-ingérer-des-offres-réelles-depuis-lapi-france-travail)
   * [5. Inspecter une offre brute (optionnel, développement)](#5-inspecter-une-offre-brute-optionnel-développement)
-* [8. TP2 - Plateforme data temps quasi réel](#8-tp2---plateforme-data-temps-quasi-réel)
+* [8. Plateforme data temps quasi réel](#8-plateforme-data-temps-quasi-réel)
   * [En une phrase](#en-une-phrase)
   * [Les mots à connaître](#les-mots-à-connaître)
   * [Les deux sources de données](#les-deux-sources-de-données)
@@ -42,10 +42,10 @@
   * [Configurer Metabase](#configurer-metabase)
   * [Démonstration rapide](#démonstration-rapide)
   * [Commandes utiles](#commandes-utiles)
-* [9. TP3 - Audit qualité et nettoyage](#9-tp3---audit-qualité-et-nettoyage)
-  * [Livrables TP3](#livrables-tp3)
+* [9. Audit qualité et nettoyage](#9-audit-qualité-et-nettoyage)
+  * [Livrables qualité](#livrables-qualité)
   * [Résultats principaux](#résultats-principaux)
-  * [Exécuter le TP3](#exécuter-le-tp3)
+  * [Exécuter l'audit qualité](#exécuter-laudit-qualité)
 
 ## En bref (à lire en premier)
 
@@ -53,13 +53,13 @@
 par France Travail pour savoir **quelles compétences numériques sont les plus
 recherchées, et où en France**.
 
-Le projet se fait en trois temps :
+Le projet forme une seule plateforme organisée en trois couches complémentaires :
 
 | Partie | Ce qu'on fait | Où le lire |
 |---|---|---|
-| **TP1** | On étudie les données et on dessine la base de données : quelles tables, quelles colonnes, quels liens. | Sections 1 à 7 |
-| **TP2** | On construit une chaîne automatique qui collecte, nettoie, stocke et affiche les offres. | Section 8 |
-| **TP3** | On mesure la qualité, corrige les anomalies et compare les résultats avant/après. | Section 9 |
+| **Modélisation** | On étudie les données et on dessine la base de données : quelles tables, quelles colonnes, quels liens. | Sections 1 à 7 |
+| **Pipeline** | On construit une chaîne automatique qui collecte, nettoie, stocke et affiche les offres. | Section 8 |
+| **Qualité** | On mesure la qualité, corrige les anomalies et compare les résultats avant/après. | Section 9 |
 
 **Pour tout lancer rapidement :**
 
@@ -77,47 +77,48 @@ La liste complète des adresses, avec ce que vous devez y voir, est dans
 
 ```text
 TP_Cours_Audit_Cartographie_SQL/
-├── README.md                 # Dossier complet du TP (ce fichier)
-├── docker-compose.yml        # Plateforme TP2 complète orchestrée par Docker
-├── docker/                   # Images Python et Spark
-├── dataviz/                  # Dashboard interactif Plotly Dash (app.py + Dockerfile)
-├── monitoring/               # Prometheus et provisioning Grafana
-├── tp3/                      # Audit, nettoyage, résultats et synthèse qualité
+├── README.md                 # Documentation principale
+├── docker-compose.yml        # Orchestration de la plateforme complète
+├── apps/
+│   └── dataviz/              # Application Plotly Dash
+├── infra/
+│   ├── docker/               # Images Python et Spark
+│   └── monitoring/           # Prometheus et provisioning Grafana
+├── database/
+│   ├── schema/               # Schéma métier, données de test et objets du pipeline
+│   ├── analytics/            # Requêtes d'analyse métier
+│   └── quality/              # Audit, nettoyage et contrôles après traitement
 ├── requirements.txt          # Dépendances des services Python
 ├── requirements-spark.txt    # Dépendances du traitement PySpark
 ├── .env.example              # Modèle des variables de connexion (sans secret)
 ├── docs/
-│   ├── mcd.mmd               # MCD Merise (diagramme Mermaid, sans FK ni type SQL)
-│   ├── mld.mmd               # MLD Merise (diagramme Mermaid, avec FK et type SQL)
-│   ├── architecture-tp2.mmd  # Architecture complète du pipeline TP2
-│   ├── dictionnaire_donnees.md # Dictionnaire autonome TP1/TP2
-│   └── model.dbml            # Modèle relationnel importable dans dbdiagram.io
-├── sql/
-│   ├── 01_schema.sql         # DROP + CREATE TABLE + contraintes + index
-│   ├── 02_seed.sql           # Jeu de données de test cohérent
-│   ├── 03_queries.sql        # Requêtes d'analyse (tableau de bord RH)
-│   └── 04_tp2_additive.sql   # Audit, enrichissement et vues TP2
+│   ├── architecture/         # Architecture du pipeline et de la qualité
+│   ├── data-model/           # MCD, MLD, DBML et schéma illustré
+│   ├── quality/              # Matrice, résultats et guides d'audit
+│   ├── presentation/         # Présentation du projet
+│   └── data-dictionary.md    # Dictionnaire de données unifié
 ├── src/
-│   ├── connection.py         # Connexion PostgreSQL par variables d'environnement
-│   ├── schema.py             # Exécution des scripts SQL depuis Python
-│   ├── api_client.py         # Client OAuth2 pour l'API France Travail (offres v2)
-│   ├── ingest.py             # Transformation JSON API -> lignes 3NF + chargement
-│   └── tp2/                  # Producer, collecte Geo, agrégation, Spark
-├── spark/
-│   └── run_batch.py          # Point d'entrée spark-submit
+│   └── emploi_pipeline/      # Code applicatif unifié : API, Kafka, Data Lake, Spark et PostgreSQL
 ├── scripts/
-│   ├── inspect_offre.py      # Utilitaire dev : dump JSON brut d'une offre (scripts/output/)
-│   └── output/               # Artefacts JSON récupérés localement (non versionnés)
+│   ├── inspect_offre.py      # Inspection ponctuelle d'une offre
+│   └── run_pipeline_batch.py # Point d'entrée spark-submit
+├── tests/                    # Tests automatisés de toute la plateforme
 └── main.py                   # Point d'entrée : connexion / --init / --sync-api
 
 ```
 
 Chaque couche a une responsabilité unique :
-- `docs/` porte la modélisation visuelle, 
-- `sql/` porte la définition des données en trois scripts numérotés et rejouables indépendamment, 
-- `src/` porte la logique d'accès à la base et à l'API,
-- `scripts/` regroupe les utilitaires de développement ponctuels, et
+- `docs/` regroupe toute la documentation fonctionnelle et technique ;
+- `database/` contient tous les scripts PostgreSQL classés par usage ;
+- `src/emploi_pipeline/` contient tout le code applicatif ;
+- `apps/` contient les interfaces utilisateur ;
+- `infra/` contient uniquement la configuration Docker et la supervision ;
+- `scripts/` regroupe les points d'entrée et utilitaires ponctuels ;
 - `main.py` reste un point d'entrée fin, sans logique métier.
+
+Les noms SQL historiques commençant par `tp2_` ou `tp3_` sont conservés pour
+rester compatibles avec la base et les volumes Docker existants. Ils ne
+correspondent plus à l'organisation des dossiers.
 
 ## 1. Sujet et problématique métier
 
@@ -154,7 +155,7 @@ bassin d'emploi ?
 * Livrer un script DDL PostgreSQL complet, avec contraintes, index, données
   de test et requêtes d'analyse orientées tableau de bord RH.
 
-## 2. Source de données réelle du TP1
+## 2. Sources de données réelles
 
 | Nom | Organisation | URL | Format | Nature | Description métier |
 |---|---|---|---|---|---|
@@ -164,7 +165,8 @@ Le cahier des charges initial envisageait de croiser cette API avec deux
 référentiels externes distincts (ROME 4.0 et Base Adresse Nationale/INSEE
 au format CSV, publiés sur data.gouv.fr) afin de fiabiliser respectivement
 le classement métier et le rattachement géographique. Dans l'implémentation
-réelle (`src/ingest.py`), ce croisement s'est avéré inutile : l'API renvoie
+réelle (`src/emploi_pipeline/ingest.py`), ce croisement s'est avéré inutile :
+l'API renvoie
 déjà, pour chaque offre, un code et un libellé ROME (`romeCode`,
 `romeLibelle`) ainsi qu'un code INSEE de commune (`lieuTravail.commune`)
 directement exploitables. Les tables `metier_rome` et `commune` sont donc
@@ -177,7 +179,7 @@ par le chargement d'un fichier CSV externe.
   ou partiellement renseignés.
 * Le champ salaire est un texte libre nécessitant un parsing par expression
   régulière pour en extraire une valeur numérique exploitable
-  (`parse_salaire_annuel` dans `src/ingest.py`).
+  (`parse_salaire_annuel` dans `src/emploi_pipeline/ingest.py`).
 * Le tableau `competences[]` peut être vide, contenir des doublons, ou
   mélanger savoir-faire et savoir-être sans distinction explicite.
 * Le code postal fourni par `lieuTravail` n'est pas toujours un identifiant
@@ -191,8 +193,8 @@ par le chargement d'un fichier CSV externe.
 ## 3. Dictionnaire de données
 
 Une version autonome de ce dictionnaire, incluant les champs d'audit et
-d'enrichissement du TP2, est disponible dans
-[`docs/dictionnaire_donnees.md`](docs/dictionnaire_donnees.md).
+d'enrichissement du pipeline, est disponible dans
+[`docs/data-dictionary.md`](docs/data-dictionary.md).
 
 | Champ | Description fonctionnelle | Type SQL cible | Exemple de valeur | Contraintes & règle métier |
 |---|---|---|---|---|
@@ -330,13 +332,13 @@ cardinalités ci-dessus. La notation Mermaid `||--o{` traduit ce couple
 « exactement un » / « zéro ou plusieurs ».*
 
 Ce diagramme est également disponible en fichier autonome dans
-[`docs/mcd.mmd`](docs/mcd.mmd), à coller directement sur
+[`docs/data-model/mcd.mmd`](docs/data-model/mcd.mmd), à coller directement sur
 <https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
 
 ### Modèle Logique des Données (schéma)
 
 Représentation avec clés primaires, clés étrangères et types SQL cibles,
-conformément au script `sql/01_schema.sql`. Contrairement au MCD, la
+conformément au script `database/schema/01_schema.sql`. Contrairement au MCD, la
 relation plusieurs-à-plusieurs est ici matérialisée par la table physique
 `EXIGENCE_OFFRE`, porteuse de sa propre clé primaire composée.
 
@@ -391,7 +393,7 @@ erDiagram
 ```
 
 Ce diagramme est également disponible en fichier autonome dans
-[`docs/mld.mmd`](docs/mld.mmd), à coller directement sur
+[`docs/data-model/mld.mmd`](docs/data-model/mld.mmd), à coller directement sur
 <https://mermaid.live> ou à ouvrir dans un éditeur supportant Mermaid.
 
 Convention de lecture : les clés primaires sont indiquées par `PK`, les
@@ -404,14 +406,14 @@ plusieurs-à-plusieurs est résolue par `EXIGENCE_OFFRE`.
 
 ## 6. Script d'implémentation PostgreSQL
 
-Le script est découpé en trois fichiers numérotés et rejouables dans l'ordre,
-disponibles dans le dossier [`sql/`](sql) :
+Les scripts sont classés par responsabilité dans le dossier
+[`database/`](database) :
 
 | Fichier | Rôle |
 |---|---|
-| [`sql/01_schema.sql`](sql/01_schema.sql) | `DROP TABLE IF EXISTS ... CASCADE` dans l'ordre inverse des dépendances, puis création des six tables avec types stricts (`BIGINT` en identité, `VARCHAR`, `NUMERIC`, `DATE`, `BOOLEAN`, `CHAR`), clés primaires, clés étrangères avec `ON DELETE RESTRICT/CASCADE` et `ON UPDATE CASCADE`, contraintes `CHECK` de validation (format du code INSEE, type de contrat autorisé, salaire positif, cohérence de l'anonymat des entreprises), et huit index B-Tree ciblant les colonnes de jointure et de filtrage les plus fréquentes. |
-| [`sql/02_seed.sql`](sql/02_seed.sql) | Jeu de données de test cohérent : deux communes, deux entreprises (dont une anonyme), deux fiches ROME, quatre compétences, trois offres et leurs liaisons de compétences avec statut d'exigence. |
-| [`sql/03_queries.sql`](sql/03_queries.sql) | Deux requêtes SQL avancées orientées tableau de bord RH. |
+| [`database/schema/01_schema.sql`](database/schema/01_schema.sql) | `DROP TABLE IF EXISTS ... CASCADE` dans l'ordre inverse des dépendances, puis création des six tables avec types stricts (`BIGINT` en identité, `VARCHAR`, `NUMERIC`, `DATE`, `BOOLEAN`, `CHAR`), clés primaires, clés étrangères avec `ON DELETE RESTRICT/CASCADE` et `ON UPDATE CASCADE`, contraintes `CHECK` de validation (format du code INSEE, type de contrat autorisé, salaire positif, cohérence de l'anonymat des entreprises), et huit index B-Tree ciblant les colonnes de jointure et de filtrage les plus fréquentes. |
+| [`database/schema/02_seed.sql`](database/schema/02_seed.sql) | Jeu de données de test cohérent : deux communes, deux entreprises (dont une anonyme), deux fiches ROME, quatre compétences, trois offres et leurs liaisons de compétences avec statut d'exigence. |
+| [`database/analytics/business_queries.sql`](database/analytics/business_queries.sql) | Deux requêtes SQL avancées orientées tableau de bord RH. |
 
 ### Aperçu des requêtes d'analyse
 
@@ -558,8 +560,8 @@ docker compose up -d
 ```
 PostgreSQL tourne dans le conteneur `postgres_emploi` (image `postgres:16-alpine`).
 Ses données sont stockées dans le volume Docker
-`tp_cours_audit_cartographie_sql_pgdata`. Les scripts `sql/01_schema.sql`,
-`sql/02_seed.sql` et `sql/04_tp2_additive.sql` ne sont exécutés qu'au premier
+`tp_cours_audit_cartographie_sql_pgdata`. Les scripts `database/schema/01_schema.sql`,
+`database/schema/02_seed.sql` et `database/schema/03_pipeline_schema.sql` ne sont exécutés qu'au premier
 démarrage, quand ce volume est encore vide.
 
 Pour réinitialiser complètement la base Docker depuis zéro (supprime les volumes) :
@@ -572,8 +574,8 @@ docker compose down -v && docker compose up -d
 ```bash
 python main.py            # affiche l'état de connexion, la volumétrie des 6 tables
                           # et un aperçu des dernières offres enregistrées en base
-python main.py --init     # recrée le schéma (sql/01_schema.sql)
-                          # et charge le jeu de données de test (sql/02_seed.sql)
+python main.py --init     # recrée le schéma (database/schema/01_schema.sql)
+                          # et charge le jeu de données de test (database/schema/02_seed.sql)
 ```
 
 #### Option C : Avec le client `psql`
@@ -581,14 +583,18 @@ python main.py --init     # recrée le schéma (sql/01_schema.sql)
 En exécutant les scripts dans l'ordre (chacun est autonome et rejouable grâce aux `DROP TABLE IF EXISTS ... CASCADE` du premier fichier) :
 
 ```bash
-psql -d emploi -f sql/01_schema.sql
-psql -d emploi -f sql/02_seed.sql
-psql -d emploi -f sql/03_queries.sql
+psql -d emploie -f database/schema/01_schema.sql
+psql -d emploie -f database/schema/02_seed.sql
+psql -d emploie -f database/analytics/business_queries.sql
 ```
 
 ### 4. Ingérer des offres réelles depuis l'API France Travail
 
-Le module `src/api_client.py` gère l'authentification OAuth2 (flux `client_credentials`) et `src/ingest.py` transforme les offres JSON reçues en lignes conformes au schéma 3NF (parsing du salaire en texte libre, gestion de l'anonymat d'entreprise, upsert idempotent des référentiels commune/ROME/compétence).
+Le module `src/emploi_pipeline/api_client.py` gère l'authentification OAuth2
+(flux `client_credentials`) et `src/emploi_pipeline/ingest.py` transforme les
+offres JSON reçues en lignes conformes au schéma 3NF (parsing du salaire en
+texte libre, gestion de l'anonymat d'entreprise, upsert idempotent des
+référentiels commune/ROME/compétence).
 
 Compléter dans `.env` les variables `FT_*` décrites dans `.env.example` (identifiant, secret, endpoint de jeton, scope, URL de l'API), puis lancer l'ingestion :
 
@@ -611,7 +617,8 @@ Chaque exécution est idempotente : les offres déjà connues (`source_offre_id`
 ### 5. Inspecter une offre brute (optionnel, développement)
 
 Pour explorer la structure JSON exacte renvoyée par l'API avant d'étendre
-`src/ingest.py`, `scripts/inspect_offre.py` réutilise `FranceTravailClient`
+`src/emploi_pipeline/ingest.py`, `scripts/inspect_offre.py` réutilise
+`FranceTravailClient`
 et sauvegarde une offre dans `scripts/output/` (dossier ignoré par git) :
 
 ```bash
@@ -619,11 +626,11 @@ python scripts/inspect_offre.py               # première offre trouvée (motsCl
 python scripts/inspect_offre.py 214JMGC       # offre précise par identifiant
 ```
 
-## 8. TP2 - Plateforme data temps quasi réel
+## 8. Plateforme data temps quasi réel
 
 ### En une phrase
 
-Le TP2 récupère automatiquement des offres d'emploi, les nettoie, les range
+La plateforme récupère automatiquement des offres d'emploi, les nettoie, les range
 dans PostgreSQL et les affiche dans des tableaux de bord. Tout se lance avec
 **une seule commande** Docker.
 
@@ -678,7 +685,7 @@ pas republiées pendant la durée de vie du producteur.
 4. TRANSFORMER  spark-batch (PySpark) nettoie : champs obligatoires, doublons, types
                 les offres invalides sont mises de côté dans quarantine/
        ↓
-5. CHARGER      les offres propres sont enregistrées dans PostgreSQL (tables du TP1)
+5. CHARGER      les offres propres sont enregistrées dans PostgreSQL (schéma 3NF)
        ↓
 6. VISUALISER   Metabase et Plotly Dash affichent les offres, compétences et villes
        ↓
@@ -686,7 +693,8 @@ pas republiées pendant la durée de vie du producteur.
                 et comparent le nombre d'offres brutes et propres
 ```
 
-Le schéma complet est dans [`docs/architecture-tp2.mmd`](docs/architecture-tp2.mmd).
+Le schéma complet est dans
+[`docs/architecture/pipeline.mmd`](docs/architecture/pipeline.mmd).
 
 Organisation du Data Lake. Ce n'est **pas** un dossier du projet : c'est le
 **volume Docker** `tp_cours_audit_cartographie_sql_data_lake`, visible dans
@@ -707,11 +715,11 @@ données**, dans trois formats :
 
 | Dossier | Format | Contenu | Écrit par | Exemple de fichier |
 |---|---|---|---|---|
-| `raw/france_travail/` | **JSON**, un fichier par offre | L'offre brute, exactement comme reçue de Kafka | `raw_aggregator_tp2` (Python) | `ingestion_date=2026-09-25/bbdcb3ae-….json` |
-| `raw/communes/` | **JSON**, un fichier par collecte | La liste des communes de l'API Géo | `communes_collector_tp2` (Python) | `ingestion_date=2026-09-25/communes_20260925T085832_594092Z.json` et `_latest.json` (copie de la dernière collecte) |
-| `aggregated/offres/` | **JSONL**, une offre par ligne | L'offre et la fiche de sa commune officielle | `raw_aggregator_tp2` (Python) | `ingestion_date=2026-09-25/part-50e0a1ec-….jsonl` |
-| `curated/offres/` | **Parquet** compressé Snappy | Les offres nettoyées, en colonnes typées | `spark_batch_tp2` (PySpark) | `run_id=…/part-00000-….snappy.parquet` |
-| `quarantine/spark/` | **JSON Lines**, une offre rejetée par ligne | Les offres rejetées et la raison du rejet | `spark_batch_tp2` (PySpark) | `run_id=…/part-00000-….json` |
+| `raw/france_travail/` | **JSON**, un fichier par offre | L'offre brute, exactement comme reçue de Kafka | `raw_aggregator_emploi` (Python) | `ingestion_date=2026-09-25/bbdcb3ae-….json` |
+| `raw/communes/` | **JSON**, un fichier par collecte | La liste des communes de l'API Géo | `communes_collector_emploi` (Python) | `ingestion_date=2026-09-25/communes_20260925T085832_594092Z.json` et `_latest.json` (copie de la dernière collecte) |
+| `aggregated/offres/` | **JSONL**, une offre par ligne | L'offre et la fiche de sa commune officielle | `raw_aggregator_emploi` (Python) | `ingestion_date=2026-09-25/part-50e0a1ec-….jsonl` |
+| `curated/offres/` | **Parquet** compressé Snappy | Les offres nettoyées, en colonnes typées | `spark_batch_emploi` (PySpark) | `run_id=…/part-00000-….snappy.parquet` |
+| `quarantine/spark/` | **JSON Lines**, une offre rejetée par ligne | Les offres rejetées et la raison du rejet | `spark_batch_emploi` (PySpark) | `run_id=…/part-00000-….json` |
 
 Comment lire ces fichiers :
 
@@ -773,36 +781,36 @@ Dans Docker Desktop, ils sont visibles dans les onglets *Containers*,
 | Rôle | Service Compose | Nom complet du conteneur | Image | Origine de l'image |
 |---|---|---|---|---|
 | Base de données | `postgres` | `postgres_emploi` | `postgres:16-alpine` | Téléchargée (Docker Hub) |
-| Kafka (boîte aux lettres) | `kafka` | `kafka_tp2` | `apache/kafka:3.7.1` | Téléchargée |
+| Kafka (boîte aux lettres) | `kafka` | `kafka_emploi` | `apache/kafka:3.7.1` | Téléchargée |
 | Création du topic Kafka (s'arrête après) | `kafka-init` | `tp_cours_audit_cartographie_sql-kafka-init-1` | `apache/kafka:3.7.1` | Téléchargée |
-| Interface Kafka | `kafka-ui` | `kafka_ui_tp2` | `provectuslabs/kafka-ui:v0.7.2` | Téléchargée |
-| Source 1 : collecte France Travail | `ft-producer` | `ft_producer_tp2` | `tp_cours_audit_cartographie_sql-ft-producer` | **Construite** par le projet (`docker/Dockerfile.python`) |
-| Source 2 : collecte des communes | `communes-collector` | `communes_collector_tp2` | `tp_cours_audit_cartographie_sql-communes-collector` | **Construite** (`docker/Dockerfile.python`) |
-| Agrégation Kafka → Data Lake | `raw-aggregator` | `raw_aggregator_tp2` | `tp_cours_audit_cartographie_sql-raw-aggregator` | **Construite** (`docker/Dockerfile.python`) |
-| Nettoyage PySpark → PostgreSQL | `spark-batch` | `spark_batch_tp2` | `tp_cours_audit_cartographie_sql-spark-batch` | **Construite** (`docker/Dockerfile.spark`) |
-| Graphiques métier | `metabase` | `metabase_tp2` | `metabase/metabase:v0.50.18` | Téléchargée |
-| Configuration auto de Metabase (optionnel, s'arrête après) | `metabase-setup` | `tp_cours_audit_cartographie_sql-metabase-setup-1` | `tp_cours_audit_cartographie_sql-metabase-setup` | **Construite** (`docker/Dockerfile.python`) |
-| Graphiques interactifs Plotly | `dataviz` | `dataviz_plotly_tp2` | `tp_cours_audit_cartographie_sql-dataviz` | **Construite** (`dataviz/Dockerfile`) |
-| Métriques PostgreSQL | `postgres-exporter` | `postgres_exporter_tp2` | `prometheuscommunity/postgres-exporter:v0.15.0` | Téléchargée |
-| Métriques Kafka | `kafka-exporter` | `kafka_exporter_tp2` | `danielqsj/kafka-exporter:v1.7.0` | Téléchargée |
-| Collecte des métriques | `prometheus` | `prometheus_tp2` | `prom/prometheus:v2.53.1` | Téléchargée |
-| Graphiques techniques | `grafana` | `grafana_tp2` | `grafana/grafana:11.1.4` | Téléchargée |
-| CPU / mémoire des conteneurs | `cadvisor` | `cadvisor_tp2` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Téléchargée (Google) |
+| Interface Kafka | `kafka-ui` | `kafka_ui_emploi` | `provectuslabs/kafka-ui:v0.7.2` | Téléchargée |
+| Source 1 : collecte France Travail | `ft-producer` | `ft_producer_emploi` | `tp_cours_audit_cartographie_sql-ft-producer` | **Construite** par le projet (`infra/docker/Dockerfile.python`) |
+| Source 2 : collecte des communes | `communes-collector` | `communes_collector_emploi` | `tp_cours_audit_cartographie_sql-communes-collector` | **Construite** (`infra/docker/Dockerfile.python`) |
+| Agrégation Kafka → Data Lake | `raw-aggregator` | `raw_aggregator_emploi` | `tp_cours_audit_cartographie_sql-raw-aggregator` | **Construite** (`infra/docker/Dockerfile.python`) |
+| Nettoyage PySpark → PostgreSQL | `spark-batch` | `spark_batch_emploi` | `tp_cours_audit_cartographie_sql-spark-batch` | **Construite** (`infra/docker/Dockerfile.spark`) |
+| Graphiques métier | `metabase` | `metabase_emploi` | `metabase/metabase:v0.50.18` | Téléchargée |
+| Configuration auto de Metabase (optionnel, s'arrête après) | `metabase-setup` | `tp_cours_audit_cartographie_sql-metabase-setup-1` | `tp_cours_audit_cartographie_sql-metabase-setup` | **Construite** (`infra/docker/Dockerfile.python`) |
+| Graphiques interactifs Plotly | `dataviz` | `dataviz_emploi` | `tp_cours_audit_cartographie_sql-dataviz` | **Construite** (`apps/dataviz/Dockerfile`) |
+| Métriques PostgreSQL | `postgres-exporter` | `postgres_exporter_emploi` | `prometheuscommunity/postgres-exporter:v0.15.0` | Téléchargée |
+| Métriques Kafka | `kafka-exporter` | `kafka_exporter_emploi` | `danielqsj/kafka-exporter:v1.7.0` | Téléchargée |
+| Collecte des métriques | `prometheus` | `prometheus_emploi` | `prom/prometheus:v2.53.1` | Téléchargée |
+| Graphiques techniques | `grafana` | `grafana_emploi` | `grafana/grafana:11.1.4` | Téléchargée |
+| CPU / mémoire des conteneurs | `cadvisor` | `cadvisor_emploi` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Téléchargée (Google) |
 
 #### Volumes (là où sont les données)
 
 | Nom complet du volume | Chemin dans le conteneur | Utilisé par | Contenu |
 |---|---|---|---|
 | `tp_cours_audit_cartographie_sql_pgdata` | `/var/lib/postgresql/data` | `postgres_emploi` | Toutes les tables PostgreSQL (offres, compétences, communes, suivi du pipeline). |
-| `tp_cours_audit_cartographie_sql_kafka_data` | `/var/lib/kafka/data` | `kafka_tp2` | Les messages Kafka (offres en transit). |
-| `tp_cours_audit_cartographie_sql_data_lake` | `/data-lake` | `communes_collector_tp2`, `raw_aggregator_tp2`, `spark_batch_tp2` | Le **Data Lake** : `raw/`, `aggregated/`, `curated/`, `quarantine/`. |
-| `tp_cours_audit_cartographie_sql_metabase_data` | `/metabase-data` | `metabase_tp2` | Comptes, connexions et dashboards Metabase. |
-| `tp_cours_audit_cartographie_sql_grafana_data` | `/var/lib/grafana` | `grafana_tp2` | Réglages et comptes Grafana. |
+| `tp_cours_audit_cartographie_sql_kafka_data` | `/var/lib/kafka/data` | `kafka_emploi` | Les messages Kafka (offres en transit). |
+| `tp_cours_audit_cartographie_sql_data_lake` | `/data-lake` | `communes_collector_emploi`, `raw_aggregator_emploi`, `spark_batch_emploi` | Le **Data Lake** : `raw/`, `aggregated/`, `curated/`, `quarantine/`. |
+| `tp_cours_audit_cartographie_sql_metabase_data` | `/metabase-data` | `metabase_emploi` | Comptes, connexions et dashboards Metabase. |
+| `tp_cours_audit_cartographie_sql_grafana_data` | `/var/lib/grafana` | `grafana_emploi` | Réglages et comptes Grafana. |
 
 Pour regarder le contenu d'un volume, par exemple le Data Lake :
 
 * **Docker Desktop** : *Volumes* → `tp_cours_audit_cartographie_sql_data_lake` → onglet *Data* ;
-* **ligne de commande** : `docker exec raw_aggregator_tp2 ls -R /data-lake`.
+* **ligne de commande** : `docker exec raw_aggregator_emploi ls -R /data-lake`.
 
 #### Fichiers du projet montés dans les conteneurs
 
@@ -810,11 +818,11 @@ Ces fichiers restent dans le dépôt Git. Les conteneurs les lisent sans pouvoir
 
 | Fichier ou dossier du projet | Chemin dans le conteneur | Conteneur | Rôle |
 |---|---|---|---|
-| `sql/01_schema.sql`, `sql/02_seed.sql`, `sql/04_tp2_additive.sql` | `/docker-entrypoint-initdb.d/` | `postgres_emploi` | Création des tables au **premier** démarrage de la base. |
-| `monitoring/prometheus.yml` | `/etc/prometheus/prometheus.yml` | `prometheus_tp2` | Liste des services à surveiller. |
-| `monitoring/postgres_exporter_queries.yaml` | `/etc/postgres_exporter/queries.yaml` | `postgres_exporter_tp2` | Requêtes qui calculent les compteurs Raw / Clean. |
-| `monitoring/grafana/provisioning/` | `/etc/grafana/provisioning` | `grafana_tp2` | Connexion automatique de Grafana à Prometheus. |
-| `monitoring/grafana/dashboards/` | `/var/lib/grafana/dashboards` | `grafana_tp2` | Dashboard **TP2 Data Platform Overview**. |
+| `database/schema/*.sql` | `/docker-entrypoint-initdb.d/` | `postgres_emploi` | Création des tables au **premier** démarrage de la base. |
+| `infra/monitoring/prometheus.yml` | `/etc/prometheus/prometheus.yml` | `prometheus_emploi` | Liste des services à surveiller. |
+| `infra/monitoring/postgres_exporter_queries.yaml` | `/etc/postgres_exporter/queries.yaml` | `postgres_exporter_emploi` | Requêtes qui calculent les compteurs Raw / Clean. |
+| `infra/monitoring/grafana/provisioning/` | `/etc/grafana/provisioning` | `grafana_emploi` | Connexion automatique de Grafana à Prometheus. |
+| `infra/monitoring/grafana/dashboards/` | `/var/lib/grafana/dashboards` | `grafana_emploi` | Dashboard technique de la plateforme. |
 
 #### Réseau
 
@@ -827,9 +835,9 @@ connecte à l'hôte `postgres` et non à `localhost`.
 
 | Service | URL | À quoi ça sert | Ce que vous devez voir | Identifiants |
 |---|---|---|---|---|
-| **Metabase** | <http://localhost:3000> | Tableau de bord **métier** : lire les offres d'emploi. | Le dashboard **TP2 - Marché de l'emploi** : offres par contrat, compétences les plus demandées, offres par ville, compteurs brut / propre. | Compte créé au premier lancement. |
+| **Metabase** | <http://localhost:3000> | Tableau de bord **métier** : lire les offres d'emploi. | Le dashboard **Marché de l'emploi** : offres par contrat, compétences les plus demandées, offres par ville, compteurs brut / propre. | Compte créé au premier lancement. |
 | **Plotly Dash** | <http://localhost:8050> | Tableau de bord **interactif** codé en Python avec Plotly. | Des filtres (contrat, domaine, commune), 5 indicateurs, 6 graphiques (contrats, top compétences, carte des offres, salaires, publications, Raw vs Clean) et un tableau des offres triable. | Aucun |
-| **Grafana** | <http://localhost:3001> | Tableau de bord **technique** : surveiller la plateforme. | Menu *Dashboards* → **TP2 Data Platform Overview** : services en marche, flux Kafka, activité PostgreSQL, courbe Raw vs Clean vs Rejected. | `admin` / `admin` |
+| **Grafana** | <http://localhost:3001> | Tableau de bord **technique** : surveiller la plateforme. | Menu *Dashboards* → **Employment Data Platform Overview** : services en marche, flux Kafka, activité PostgreSQL, courbe Raw vs Clean vs Rejected. | `admin` / `admin` |
 | **Kafka UI** | <http://localhost:8080> | Voir les messages qui passent dans Kafka. | Menu *Topics* → `france-travail.offres.raw` : le nombre de messages augmente à chaque collecte ; onglet *Messages* pour lire une offre. | Aucun |
 | **Prometheus** | <http://localhost:9090> | Vérifier que chaque service est bien surveillé. | Menu *Status* → *Targets* : toutes les lignes doivent être **UP** (en vert). | Aucun |
 | **cAdvisor** | <http://localhost:8081> | Consommation CPU et mémoire de chaque conteneur. | La liste des conteneurs Docker avec leurs graphiques CPU / mémoire. | Aucun |
@@ -853,14 +861,14 @@ docker compose --profile metabase-setup up metabase-setup
 ```
 
 Cela crée la connexion à la base, quatre graphiques et le dashboard
-**TP2 - Marché de l'emploi**.
+**Marché de l'emploi**.
 
 **Option manuelle.** Dans Metabase : *Admin* → *Bases de données* →
 *Ajouter une base de données* → PostgreSQL :
 
 | Champ | Valeur | Pourquoi |
 |---|---|---|
-| Nom affiché | `TP2 PostgreSQL` | Libre, juste pour s'y retrouver. |
+| Nom affiché | `PostgreSQL Emploi` | Libre, juste pour s'y retrouver. |
 | Hôte | `postgres` | Metabase tourne dans Docker : il faut le **nom du service**, pas `localhost`. |
 | Port | `5432` | Port standard de PostgreSQL. |
 | Base de données | valeur de `PGDATABASE` dans `.env` (ex. `emploie`) | Nom de la base créée par Docker. |
@@ -906,22 +914,23 @@ Pour une démo plus rapide, baisser dans `.env`
 du projet sont conservés. Les données générées (`data-lake/`, `*.jsonl`,
 `*.parquet`, `scripts/output/`) ne sont jamais envoyées sur Git.
 
-## 9. TP3 - Audit qualité et nettoyage
+## 9. Audit qualité et nettoyage
 
-Le TP3 audite la sortie PostgreSQL du pipeline TP2 selon cinq dimensions :
+La couche qualité audite la sortie PostgreSQL du pipeline selon cinq dimensions :
 **complétude, unicité, validité, cohérence et intégrité**. Les données brutes
 du Data Lake ne sont jamais modifiées.
 
-### Livrables TP3
+### Livrables qualité
 
-Le dossier [`tp3/`](tp3/) contient :
+La documentation se trouve dans [`docs/quality/`](docs/quality/) et les
+scripts exécutables dans [`database/quality/`](database/quality/) :
 
-- la [cartographie mise à jour](tp3/cartographie-tp3.mmd) ;
-- la [matrice des 17 contrôles](tp3/matrice-controles.md) ;
-- les [scripts SQL d'audit et de nettoyage](tp3/sql/) ;
-- les [résultats avant/après](tp3/resultats-avant-apres.md) ;
-- la [documentation technique](tp3/technique.md) ;
-- la [synthèse pour l'oral](tp3/synthese-orale.md).
+- la [cartographie mise à jour](docs/architecture/data-quality.mmd) ;
+- la [matrice des 17 contrôles](docs/quality/control-matrix.md) ;
+- les [scripts SQL d'audit et de nettoyage](database/quality/) ;
+- les [résultats avant/après](docs/quality/before-after-results.md) ;
+- la [documentation technique](docs/quality/technical-guide.md) ;
+- la [synthèse pour l'oral](docs/quality/oral-summary.md).
 
 ### Résultats principaux
 
@@ -935,24 +944,24 @@ Le dossier [`tp3/`](tp3/) contient :
 Les valeurs encore manquantes ne sont pas inventées : elles restent
 identifiées comme avertissements et documentées comme limites de la source.
 
-### Exécuter le TP3
+### Exécuter l'audit qualité
 
 ```bash
 docker compose stop ft-producer spark-batch
-docker cp tp3/. postgres_emploi:/tmp/tp3/
+docker cp database/quality/. postgres_emploi:/tmp/quality/
 
-docker exec -w /tmp/tp3/sql postgres_emploi \
-  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 01_audit_avant.sql
+docker exec -w /tmp/quality postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 01_audit_before.sql
 
-docker exec -w /tmp/tp3/sql postgres_emploi \
-  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 02_nettoyage.sql
+docker exec -w /tmp/quality postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 02_clean_data.sql
 
-docker exec -w /tmp/tp3/sql postgres_emploi \
-  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 03_controle_apres.sql
+docker exec -w /tmp/quality postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 03_audit_after.sql
 ```
 
 Après reconstruction et rejeu de Spark, le script
-`04_controle_pipeline.sql` prouve que les corrections ne sont pas recréées.
+`04_audit_pipeline.sql` prouve que les corrections ne sont pas recréées.
 Les résultats sont historisés dans `tp3_quality_run` et
 `tp3_quality_result`. Toutes les corrections sont tracées dans
 `tp3_cleaning_log`.

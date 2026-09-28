@@ -1,6 +1,6 @@
 import unittest
 
-from src.ingest import parse_salaire_annuel, transform_offre
+from src.emploi_pipeline.ingest import parse_salaire_annuel, transform_offre
 
 
 class IngestTransformsTest(unittest.TestCase):

@@ -1,6 +1,6 @@
 import unittest
 
-from src.tp2.event_contracts import (
+from src.emploi_pipeline.event_contracts import (
     build_aggregated_record,
     build_offer_event,
     enrich_offer_with_commune_reference,

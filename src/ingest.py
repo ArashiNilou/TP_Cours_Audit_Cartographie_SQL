@@ -27,7 +27,13 @@ DEPARTEMENTS_FRANCE: list[str] = [
 
 # Capture les nombres décimaux (à virgule ou point) présents dans un texte
 # libre de salaire, par exemple "Annuel de 38000.0 Euros à 45000.0 Euros".
-_SALAIRE_NOMBRE_RE = re.compile(r"(\d+(?:[.,]\d+)?)")
+_SALAIRE_EUROS_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*euros?",
+    flags=re.IGNORECASE,
+)
+_ESPACES_RE = re.compile(r"\s+")
+SALAIRE_ANNUEL_MIN = 1_000
+SALAIRE_ANNUEL_MAX = 250_000
 
 # Types de contrat acceptés par la contrainte CHECK ck_offre_type_contrat_valide.
 TYPES_CONTRAT_VALIDES = {"CDI", "CDD", "MIS", "SAI", "CCE"}
@@ -73,24 +79,41 @@ def parse_salaire_annuel(libelle: str | None) -> float | None:
     """Extrait un salaire brut annuel estimé à partir d'un texte libre.
 
     Règle métier : lorsque deux bornes sont présentes, on retient leur
-    moyenne. Lorsque la périodicité est mensuelle, la valeur est ramenée à
-    un équivalent annuel (x12). En l'absence de nombre exploitable, la
-    fonction retourne None plutôt qu'une valeur arbitraire.
+    moyenne. Les montants mensuels, horaires, hebdomadaires et journaliers
+    sont ramenés à un équivalent temps plein annuel. Les nombres qui ne
+    précèdent pas « Euros » sont ignorés afin de ne pas confondre salaire et
+    horaires présents dans les commentaires. Une estimation supérieure à
+    250 000 EUR est considérée trop ambiguë et laissée à NULL.
     """
     if not libelle:
         return None
 
     nombres = [
         float(valeur.replace(",", "."))
-        for valeur in _SALAIRE_NOMBRE_RE.findall(libelle)
-    ]
+        for valeur in _SALAIRE_EUROS_RE.findall(libelle)
+    ][:2]
     if not nombres:
         return None
 
     moyenne = sum(nombres) / len(nombres)
-    if "mensuel" in libelle.lower():
+    libelle_normalise = libelle.lower()
+    if "mensuel" in libelle_normalise:
         moyenne *= 12
+    elif "horaire" in libelle_normalise:
+        moyenne *= 35 * 52
+    elif "hebdomadaire" in libelle_normalise:
+        moyenne *= 52
+    elif "journalier" in libelle_normalise:
+        moyenne *= 218
+
+    if moyenne < SALAIRE_ANNUEL_MIN or moyenne > SALAIRE_ANNUEL_MAX:
+        return None
     return round(moyenne, 2)
+
+
+def normalize_source_text(value: str | None, max_length: int) -> str:
+    """Supprime les espaces parasites sans modifier l'orthographe source."""
+    return _ESPACES_RE.sub(" ", value or "").strip()[:max_length]
 
 
 def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
@@ -110,7 +133,7 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
 
 def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
     entreprise = offre_json.get("entreprise") or {}
-    nom = (entreprise.get("nom") or "").strip()[:250]
+    nom = normalize_source_text(entreprise.get("nom"), 250)
     return {
         "raison_sociale": nom or None,
         "entreprise_anonyme": not bool(nom),
@@ -120,7 +143,7 @@ def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
 def _extract_competences(offre_json: dict[str, Any]) -> list[dict[str, str]]:
     competences = []
     for item in offre_json.get("competences") or []:
-        libelle = (item.get("libelle") or "").strip()[:300]
+        libelle = normalize_source_text(item.get("libelle"), 300)
         exigence = item.get("exigence")
         if not libelle:
             continue
@@ -196,7 +219,14 @@ def _upsert_entreprise(cur: psycopg.Cursor, entreprise: dict[str, Any]) -> int:
         return cur.fetchone()[0]
 
     cur.execute(
-        "SELECT entreprise_id FROM entreprise WHERE raison_sociale = %(raison_sociale)s;",
+        """
+        SELECT entreprise_id
+        FROM entreprise
+        WHERE lower(regexp_replace(btrim(raison_sociale), '\\s+', ' ', 'g'))
+            = lower(%(raison_sociale)s)
+        ORDER BY entreprise_id
+        LIMIT 1;
+        """,
         entreprise,
     )
     row = cur.fetchone()
@@ -225,6 +255,21 @@ def _upsert_metier_rome(cur: psycopg.Cursor, offre: dict[str, Any]) -> None:
 
 
 def _upsert_competence(cur: psycopg.Cursor, libelle: str) -> int:
+    cur.execute(
+        """
+        SELECT competence_id
+        FROM competence
+        WHERE lower(regexp_replace(btrim(libelle_competence), '\\s+', ' ', 'g'))
+            = lower(%(libelle)s)
+        ORDER BY competence_id
+        LIMIT 1;
+        """,
+        {"libelle": libelle},
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
     cur.execute(
         """
         INSERT INTO competence (libelle_competence, type_competence)

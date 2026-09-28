@@ -43,3 +43,23 @@ pipeline. Les tailles correspondent au schéma PostgreSQL de
 | `geo_nom_commune` | Nom officiel obtenu via la Geo API | `varchar(100)` | Nullable |
 | `geo_code_postal` | Code postal obtenu via la Geo API | `varchar(5)` | Nullable |
 
+## Champs d'audit qualité TP3
+
+| Champ | Description fonctionnelle | Type SQL cible | Contraintes principales |
+|---|---|---|---|
+| `run_id` | Identifiant d'un audit qualité | `bigint` | PK de `tp3_quality_run`, FK dans les résultats |
+| `phase` | Moment de la mesure | `varchar(30)` | `before_cleaning`, `after_cleaning`, `monitoring` |
+| `executed_at` | Horodatage de l'audit ou de la correction | `timestamptz` | NOT NULL |
+| `control_code` | Identifiant stable d'un contrôle | `varchar(10)` | Composé avec `run_id` dans la PK |
+| `dimension` | Dimension de qualité | `varchar(20)` | `completude`, `unicite`, `validite`, `coherence`, `integrite` |
+| `severity` | Gravité de l'anomalie | `varchar(10)` | `INFO`, `LOW`, `MEDIUM`, `HIGH` |
+| `anomaly_count` | Nombre d'anomalies observées | `bigint` | Positif ou nul |
+| `population_count` | Nombre de lignes contrôlées | `bigint` | Positif ou nul |
+| `anomaly_rate_pct` | Taux d'anomalie en pourcentage | `numeric(8,4)` | Calculé par le script d'audit |
+| `result_status` | Résultat du contrôle | `varchar(10)` | `PASS`, `WARN`, `FAIL` |
+| `cleaning_id` | Identifiant d'une correction journalisée | `bigint` | PK de `tp3_cleaning_log` |
+| `rule_code` | Règle de nettoyage appliquée | `varchar(20)` | Ex. `R01_COMPETENCE` |
+| `record_key` | Clé métier ou technique corrigée | `text` | NOT NULL |
+| `old_value` | Valeur avant correction | `text` | Nullable |
+| `new_value` | Valeur après correction | `text` | Nullable |
+| `justification` | Décision métier expliquant la correction | `text` | NOT NULL |

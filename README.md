@@ -42,6 +42,10 @@
   * [Configurer Metabase](#configurer-metabase)
   * [Démonstration rapide](#démonstration-rapide)
   * [Commandes utiles](#commandes-utiles)
+* [9. TP3 - Audit qualité et nettoyage](#9-tp3---audit-qualité-et-nettoyage)
+  * [Livrables TP3](#livrables-tp3)
+  * [Résultats principaux](#résultats-principaux)
+  * [Exécuter le TP3](#exécuter-le-tp3)
 
 ## En bref (à lire en premier)
 
@@ -49,12 +53,13 @@
 par France Travail pour savoir **quelles compétences numériques sont les plus
 recherchées, et où en France**.
 
-Le projet se fait en deux temps :
+Le projet se fait en trois temps :
 
 | Partie | Ce qu'on fait | Où le lire |
 |---|---|---|
 | **TP1** | On étudie les données et on dessine la base de données : quelles tables, quelles colonnes, quels liens. | Sections 1 à 7 |
 | **TP2** | On construit une chaîne automatique qui collecte, nettoie, stocke et affiche les offres. | Section 8 |
+| **TP3** | On mesure la qualité, corrige les anomalies et compare les résultats avant/après. | Section 9 |
 
 **Pour tout lancer rapidement :**
 
@@ -77,6 +82,7 @@ TP_Cours_Audit_Cartographie_SQL/
 ├── docker/                   # Images Python et Spark
 ├── dataviz/                  # Dashboard interactif Plotly Dash (app.py + Dockerfile)
 ├── monitoring/               # Prometheus et provisioning Grafana
+├── tp3/                      # Audit, nettoyage, résultats et synthèse qualité
 ├── requirements.txt          # Dépendances des services Python
 ├── requirements-spark.txt    # Dépendances du traitement PySpark
 ├── .env.example              # Modèle des variables de connexion (sans secret)
@@ -899,3 +905,54 @@ Pour une démo plus rapide, baisser dans `.env`
 `_data_lake`, `_metabase_data` et `_grafana_data`. Les images et les fichiers
 du projet sont conservés. Les données générées (`data-lake/`, `*.jsonl`,
 `*.parquet`, `scripts/output/`) ne sont jamais envoyées sur Git.
+
+## 9. TP3 - Audit qualité et nettoyage
+
+Le TP3 audite la sortie PostgreSQL du pipeline TP2 selon cinq dimensions :
+**complétude, unicité, validité, cohérence et intégrité**. Les données brutes
+du Data Lake ne sont jamais modifiées.
+
+### Livrables TP3
+
+Le dossier [`tp3/`](tp3/) contient :
+
+- la [cartographie mise à jour](tp3/cartographie-tp3.mmd) ;
+- la [matrice des 17 contrôles](tp3/matrice-controles.md) ;
+- les [scripts SQL d'audit et de nettoyage](tp3/sql/) ;
+- les [résultats avant/après](tp3/resultats-avant-apres.md) ;
+- la [documentation technique](tp3/technique.md) ;
+- la [synthèse pour l'oral](tp3/synthese-orale.md).
+
+### Résultats principaux
+
+| Anomalie | Avant | Après |
+|---|---:|---:|
+| Lignes de compétences redondantes (98 groupes) | 114 | 0 |
+| Groupes d'entreprises dupliquées | 20 | 0 |
+| Salaires annuels hors échelle | 7 614 | 0 |
+| Références orphelines | 0 | 0 |
+
+Les valeurs encore manquantes ne sont pas inventées : elles restent
+identifiées comme avertissements et documentées comme limites de la source.
+
+### Exécuter le TP3
+
+```bash
+docker compose stop ft-producer spark-batch
+docker cp tp3/. postgres_emploi:/tmp/tp3/
+
+docker exec -w /tmp/tp3/sql postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 01_audit_avant.sql
+
+docker exec -w /tmp/tp3/sql postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 02_nettoyage.sql
+
+docker exec -w /tmp/tp3/sql postgres_emploi \
+  psql -v ON_ERROR_STOP=1 -U postgres -d emploie -f 03_controle_apres.sql
+```
+
+Après reconstruction et rejeu de Spark, le script
+`04_controle_pipeline.sql` prouve que les corrections ne sont pas recréées.
+Les résultats sont historisés dans `tp3_quality_run` et
+`tp3_quality_result`. Toutes les corrections sont tracées dans
+`tp3_cleaning_log`.

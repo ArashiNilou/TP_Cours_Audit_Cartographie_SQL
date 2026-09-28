@@ -1,0 +1,31 @@
+flowchart LR
+    FT[API France Travail<br/>JSON] --> Kafka[Kafka<br/>offres.raw]
+    Geo[API Géo<br/>communes] --> Lake
+    Kafka --> Lake[(Data Lake Docker)]
+
+    subgraph Zones du Data Lake
+        Lake --> Raw[raw<br/>JSON]
+        Raw --> Agg[aggregated<br/>JSONL]
+        Agg --> Spark[PySpark<br/>validation et dédoublonnage]
+        Spark --> Curated[curated<br/>Parquet]
+        Spark --> Quarantine[quarantine<br/>JSON]
+    end
+
+    Curated --> PG[(PostgreSQL<br/>schéma 3NF)]
+
+    subgraph TP3 Audit qualité
+        PG --> Matrix[Matrice de 17 contrôles]
+        Matrix --> Before[Audit SQL avant]
+        Before --> Cleaning[Nettoyage transactionnel]
+        Cleaning --> Log[(tp3_cleaning_log)]
+        Cleaning --> After[Contrôle SQL après]
+        After --> Compare[Vue avant / après]
+    end
+
+    Compare --> Viz[Metabase / Plotly<br/>données conformes]
+    Compare --> Oral[Synthèse et restitution]
+
+    Prometheus[Prometheus] --> Grafana[Grafana]
+    PG --> Prometheus
+    Kafka --> Prometheus
+

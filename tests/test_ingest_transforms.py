@@ -13,6 +13,21 @@ class IngestTransformsTest(unittest.TestCase):
     def test_parse_salaire_mensuel_to_annual(self) -> None:
         self.assertEqual(parse_salaire_annuel("Mensuel de 2500 Euros"), 30000.0)
 
+    def test_parse_salaire_horaire_ignores_comment_times(self) -> None:
+        self.assertEqual(
+            parse_salaire_annuel(
+                "Horaire de 12.31 Euros à 13.0 Euros - "
+                "majoration heures de nuit de 4h00 à 6h00"
+            ),
+            23032.1,
+        )
+
+    def test_parse_salaire_implausible_returns_none(self) -> None:
+        self.assertIsNone(
+            parse_salaire_annuel("Mensuel de 40000 Euros à 45000 Euros")
+        )
+        self.assertIsNone(parse_salaire_annuel("Annuel de 500 Euros"))
+
     def test_transform_offre_extracts_3nf_fields(self) -> None:
         offre = {
             "id": "214JMGC",
@@ -47,4 +62,3 @@ class IngestTransformsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

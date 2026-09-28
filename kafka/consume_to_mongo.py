@@ -1,3 +1,4 @@
+import os
 import json
 import sys
 from confluent_kafka import Consumer, KafkaError, KafkaException
@@ -7,7 +8,7 @@ def main():
     # 1. Configuration de la connexion MongoDB (Data Lake)
     print("🔌 Connexion à MongoDB...")
     try:
-        mongo_client = MongoClient("mongodb://localhost:27017/")
+        mongo_client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
         db = mongo_client["emploi_datalake"]
         collection = db["raw_jobs"]
         print("✅ Connecté à MongoDB (Base: emploi_datalake, Collection: raw_jobs)")
@@ -17,7 +18,7 @@ def main():
 
     # 2. Configuration du Consumer Kafka
     conf = {
-        'bootstrap.servers': 'localhost:9092',
+        'bootstrap.servers': os.getenv('KAFKA_BROKER', 'localhost:9092'),
         'group.id': 'mongodb-ingestion-group',
         'auto.offset.reset': 'earliest' # Permet de lire les anciens messages si on vient de lancer le script
     }

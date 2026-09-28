@@ -9,6 +9,7 @@ pouvoir rejouer une synchronisation sans dupliquer les données.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Iterable
@@ -109,7 +110,14 @@ def _extract_commune(offre_json: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _extract_entreprise(offre_json: dict[str, Any]) -> dict[str, Any]:
-    entreprise = offre_json.get("entreprise") or {}
+    import json
+    entreprise = offre_json.get("entreprise")
+    if isinstance(entreprise, str):
+        try:
+            entreprise = json.loads(entreprise)
+        except Exception:
+            entreprise = {"nom": entreprise}
+    entreprise = entreprise or {}
     nom = (entreprise.get("nom") or "").strip()[:250]
     return {
         "raison_sociale": nom or None,
@@ -150,8 +158,8 @@ def transform_offre(offre_json: dict[str, Any]) -> dict[str, Any]:
         "type_contrat": (offre_json.get("typeContrat") or "")[:5],
         "duree_travail": duree[:100] if duree else None,
         "salaire_brut_annuel_estime": parse_salaire_annuel(
-            (offre_json.get("salaire") or {}).get("libelle")
-        ),
+            (json.loads(offre_json.get("salaire")) if isinstance(offre_json.get("salaire"), str) else (offre_json.get("salaire") or {})).get("libelle")
+        ) if offre_json.get("salaire") else None,
         "rome_code": offre_json.get("romeCode"),
         "rome_libelle": rome_lib,
         "domaine_professionnel": resolve_domaine_professionnel(
@@ -237,7 +245,8 @@ def load_offres(offres_json: Iterable[dict[str, Any]]) -> int:
     if not offres_json:
         return 0
         
-    client = MongoClient("mongodb://localhost:27017/")
+    import os
+    client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
     db = client["emploi_datalake"]
     collection = db["raw_jobs"]
     

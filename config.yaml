@@ -1,0 +1,20 @@
+# Configuration Métier des Scrapers (Business Logic)
+
+scraping:
+  # Intervalle de temps entre deux lancements complets (en heures)
+  interval_hours: 6
+
+  hellowork:
+    # Liste des métiers à rechercher
+    queries:
+      - "intelligence artificielle"
+      - "développeur IA"
+    # Scraping profond : nombre de pages maximum par métier
+    max_pages: 30
+
+  france_travail:
+    queries:
+      - "intelligence artificielle"
+      - "développeur IA"
+    # Volume de recherche : nombre de résultats maximum par métier
+    max_results: 1500

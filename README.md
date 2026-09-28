@@ -1,61 +1,115 @@
-# TP2 - Pipeline Data Engineer : Cartographie de l'Emploi en France
+# Projet de Data Engineering : Cartographie de l'Emploi en France (TP1, TP2, TP3)
 
-##  Description du Projet
-Ce projet est un pipeline complet de Data Engineering visant à agréger et analyser les offres d'emploi en France provenant de deux sources distinctes (France Travail et HelloWork), dans le respect des contraintes d'une architecture Big Data moderne.
+##  Présentation du Projet
+Ce dépôt centralise l'ensemble des travaux réalisés pour construire un pipeline complet d'Ingestion, de Traitement et de Restitution de la donnée. Il répond aux exigences d'une architecture Big Data moderne de type **ELT / Medallion Architecture**, en couvrant les aspects de collecte, d'orchestration, d'audit qualité et d'observabilité.
 
-###  Architecture
-L'architecture est entièrement conteneurisée via Docker et s'articule autour des composants suivants :
-1. **Sources (Ingestion)** :
-   - `api/` : Scripts de consommation de l'API France Travail.
-   - `source2/` : Web Scraper HelloWork.
-2. **Streaming (Kafka)** :
-   - Le scraper pousse les données brutes sur un topic Kafka.
-   - Le script `kafka/consume_to_mongo.py` dépile les messages pour les sauvegarder.
-3. **Data Lake (MongoDB)** :
-   - Stockage orienté document des données brutes (Raw Data).
-4. **Processing (PySpark)** :
-   - Transformation, nettoyage et normalisation des données (`spark/spark_etl.py`).
-5. **Data Warehouse (PostgreSQL)** :
-   - Stockage relationnel des données nettoyées (Clean Data) en étoile (Star Schema).
-6. **Observabilité (Monitoring)** :
-   - `cAdvisor` : Métriques Docker (CPU, RAM).
-   - `Postgres-Exporter` : Métriques PostgreSQL.
-   - `Custom Exporter` : Script Python exposant le volume (Raw vs Clean).
-   - `Prometheus` : Scraping et stockage des métriques.
-   - `Grafana` : Tableaux de bord d'exploitation technique.
+### Couverture des TPs
+- **TP1** : Modélisation des données (PostgreSQL), Scripts de création (DDL), et architecture globale.
+- **TP2** : Implémentation du pipeline distribué (Kafka, MongoDB, PySpark).
+- **TP3** : Démarche de Data Stewardship, profilage, audit qualité et nettoyage SQL post-ingestion.
 
-##  Déploiement et Lancement
+---
 
-### 1. Démarrer l'infrastructure
-Lancer l'ensemble des conteneurs en arrière-plan :
-```bash
-docker compose up -d
+##  Architecture Technique
+
+L'architecture est entièrement conteneurisée via **Docker Compose** et est scindée en grandes phases métier :
+
+1. **Extraction & Chargement (EL) - *Phase Continue (Automatisée)*** :
+   - Les scrapers (API France Travail et Playwright HelloWork) tournent en boucle via Docker.
+   - Les données HelloWork transitent par **Kafka** avant d'être consommées.
+   - Toutes les offres brutes atterrissent dans le **Data Lake (MongoDB)**.
+2. **Transformation (T) - *Phase Batch (Manuelle)*** :
+   - Un script **PySpark** applique le schéma cible (Schema Enforcement) et migre les données du Data Lake vers le **Data Warehouse (PostgreSQL)** en modèle Étoile.
+3. **Audit et Qualité (Data Stewardship) - *Post-Ingestion*** :
+   - Des scripts SQL d'audit et de correction (imputation, dédoublonnage) garantissent la pureté de la donnée dans le Warehouse (cf. `docs/TP3_Audit_Qualite/`).
+4. **Restitution & Observabilité** :
+   - **Metabase** (Business Intelligence) : Tableaux de bord métier (Salaires, Localisations, Contrats).
+   - **Grafana & Prometheus** (SRE / Infra) : Tableaux de bord techniques (Santé des conteneurs, Métriques de volumétrie via des sondes Python personnalisées).
+
+---
+
+## ️ Configuration (Fichier `.env`)
+
+L'intégralité du comportement du projet est pilotable dynamiquement. Avant de lancer le projet, assurez-vous de configurer votre fichier `.env` (à la racine) :
+
+```env
+# Clés API France Travail
+FT_CLIENT_ID=votre_cle
+FT_CLIENT_SECRET=votre_secret
+
+# Configuration des recherches HelloWork
+HELLOWORK_QUERIES="data engineer, developpeur python, devops, data scientist, administrateur systeme"
+HELLOWORK_MAX_PAGES=2
+
+# Configuration des recherches France Travail
+FRANCETRAVAIL_QUERIES="developpeur, data engineer"
+FRANCETRAVAIL_MAX_RESULTS=150
+
+# Configuration PostgreSQL
+PGHOST=localhost
+...
 ```
-Les bases de données s'initialisent automatiquement avec le schéma situé dans `postgres/sql/`.
 
-### 2. Lancer l'ingestion de données
-**A. API France Travail** (Alimente MongoDB directement) :
-```bash
-PYTHONPATH=. .venv/bin/python main.py --sync-all
-```
+---
 
-**B. Scraper HelloWork + Kafka** (Streaming) :
-Dans un premier terminal, lancer le consommateur :
-```bash
-PYTHONPATH=. .venv/bin/python kafka/consume_to_mongo.py
-```
-Dans un second terminal, lancer le scraper :
-```bash
-PYTHONPATH=. .venv/bin/python source2/scrape_hellowork.py --query "data engineer" --pages 1
-```
+## 🛠️ Prérequis et Installation locale
 
-### 3. Traitement PySpark (ETL)
-Transférer les données du Data Lake vers le Data Warehouse :
+Bien que l'ingestion soit sous Docker, la transformation PySpark se lance localement pour ce projet. Avant la première utilisation :
+
+1. **Cloner le projet** et initialiser l'environnement :
+   ```bash
+   cp .env.example .env
+   # Remplissez FT_CLIENT_ID et FT_CLIENT_SECRET dans le fichier .env
+   ```
+2. **Installer Python et les dépendances** :
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. **Java 17** : Assurez-vous d'avoir Java 11 ou 17 installé (`JAVA_HOME` configuré), prérequis strict pour exécuter PySpark localement.
+
+---
+
+## 🚀 Lancement et Utilisation
+
+### 1. Démarrer l'infrastructure et l'Ingestion
+Déployez les 13 conteneurs d'un seul coup :
+```bash
+docker compose up -d --build
+```
+> **Magie de l'automatisation :** Les bases s'initialisent, et les 3 conteneurs de collecte (`ft-scraper`, `hw-scraper`, `kafka-consumer`) commencent immédiatement à aspirer le web en arrière-plan. Votre Data Lake (MongoDB) se remplit tout seul !
+
+### 2. Lancer la Transformation PySpark (Batch ETL)
+Quand vous jugez avoir assez de données brutes, lancez le traitement lourd manuellement pour alimenter PostgreSQL :
 ```bash
 ./run_spark.sh
 ```
 
-### 4. Vérification et Observabilité
-* **Résumé métier** : `PYTHONPATH=. .venv/bin/python main.py`
-* **Grafana (Monitoring Infra)** : `http://localhost:3000` (admin/admin)
-* **Kafka UI** : `http://localhost:8080`
+### 3. Exécuter l'Audit Qualité (TP3)
+Pour auditer, nettoyer, imputer et standardiser les données fraîchement arrivées, exécutez ces commandes directement depuis votre terminal (elles injectent les scripts SQL dans le conteneur PostgreSQL) :
+
+```bash
+# 1. Voir l'état des données brutes
+docker exec -i postgres_emploi psql -U postgres -d emploi < docs/TP3_Audit_Qualite/sql/01_audit_avant.sql
+
+# 2. Lancer le nettoyage (Filtrage des outliers, dédoublonnage, etc.)
+docker exec -i postgres_emploi psql -U postgres -d emploi < docs/TP3_Audit_Qualite/sql/02_nettoyage.sql
+
+# 3. Vérifier que les anomalies ont bien disparu
+docker exec -i postgres_emploi psql -U postgres -d emploi < docs/TP3_Audit_Qualite/sql/03_audit_apres.sql
+```
+*(Toute la démarche et les justifications statistiques sont documentées dans `docs/TP3_Audit_Qualite/README.md`)*
+
+---
+
+##  Interfaces et Tableaux de bord
+
+Une fois l'infrastructure lancée, vous avez accès à tous les portails web locaux :
+
+| Outil | URL | Identifiants | Usage |
+| :--- | :--- | :--- | :--- |
+| **Metabase** | [http://localhost:3001](http://localhost:3001) | *À définir au 1er lancement* | Création des Dashboards Métiers (Data Viz). *Connectez-le au host "postgres", port 5432, user "postgres".* |
+| **Grafana** | [http://localhost:3000](http://localhost:3000) | `admin` / `admin` | Monitoring Technique (Santé Docker, Volumétrie des bases de données). |
+| **Kafka UI** | [http://localhost:8080](http://localhost:8080) | *Aucun* | Visualisation en direct du streaming des messages HelloWork. |
+| **Spark UI** | [http://localhost:4040](http://localhost:4040) | *Aucun* | Uniquement disponible pendant les ~10 secondes où `run_spark.sh` s'exécute. |

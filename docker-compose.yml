@@ -128,7 +128,67 @@ services:
       - mongodb
     restart: unless-stopped
 
+
+
+  kafka-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    container_name: kafka_consumer_emploi
+    command: ["python", "kafka/consume_to_mongo.py"]
+    environment:
+      - KAFKA_BROKER=kafka:29092
+      - HELLOWORK_QUERIES=${HELLOWORK_QUERIES}
+      - HELLOWORK_MAX_PAGES=${HELLOWORK_MAX_PAGES}
+      - MONGO_URI=mongodb://mongodb:27017/
+      - FRANCETRAVAIL_QUERIES=${FRANCETRAVAIL_QUERIES}
+      - FRANCETRAVAIL_MAX_RESULTS=${FRANCETRAVAIL_MAX_RESULTS}
+    depends_on:
+      - kafka
+      - mongodb
+    restart: unless-stopped
+
+  ft-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    container_name: ft_scraper_emploi
+    command: ["python", "source1/loop_ft.py"]
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
+  hw-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    container_name: hw_scraper_emploi
+    command: ["python", "source2/loop_hw.py"]
+    environment:
+      - KAFKA_BROKER=kafka:29092
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase_emploi
+    ports:
+      - "3001:3000"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    volumes:
+      - metabase-data:/metabase.db
+
 volumes:
   pgdata:
   mongodata:
-
+  metabase-data:

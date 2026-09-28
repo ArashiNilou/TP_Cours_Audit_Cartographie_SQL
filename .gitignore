@@ -38,3 +38,6 @@ scripts/output/
 # --- Exports de bases de données ---
 *.sql.bak
 *.dump
+
+# --- Présentations et rendus ---
+docs/presentation/

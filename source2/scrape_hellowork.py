@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import argparse
@@ -19,7 +20,7 @@ async def scrape_hellowork(query: str, location: str, max_pages: int = 1):
     Scrape le site HelloWork et envoie chaque offre en streaming vers Kafka (Producer).
     """
     # Configuration du Producer Kafka
-    producer_conf = {'bootstrap.servers': 'localhost:9092'}
+    producer_conf = {'bootstrap.servers': os.getenv('KAFKA_BROKER', 'localhost:9092')}
     kafka_producer = Producer(producer_conf)
     topic_name = "hellowork_jobs"
     

@@ -22,7 +22,9 @@ def process_partition(iterator):
         if source == "france_travail":
             try:
                 transformed_jobs.append(transform_offre(job))
-            except Exception:
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
                 pass
         elif source == "hellowork":
             try:

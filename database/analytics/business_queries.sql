@@ -1,7 +1,7 @@
 -- =============================================================================
 -- TP Audit / Cartographie / Modélisation
 -- Domaine : Emploi, marché du travail et recrutement
--- Fichier : 03_queries.sql
+-- Fichier : business_queries.sql
 -- Objet   : requêtes d'analyse avancées simulant un tableau de bord RH
 --           (à exécuter après 01_schema.sql et 02_seed.sql).
 -- SGBD cible : PostgreSQL 14+

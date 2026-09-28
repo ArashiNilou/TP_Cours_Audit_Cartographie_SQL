@@ -1,0 +1,27 @@
+pg_tp2_pipeline_counts:
+  query: |
+    SELECT
+      raw_total::float AS raw_total,
+      clean_total::float AS clean_total,
+      rejected_total::float AS rejected_total
+    FROM tp2_pipeline_latest_counts
+  metrics:
+    - raw_total:
+        usage: "GAUGE"
+        description: "Total raw aggregated records processed by successful TP2 Spark runs"
+    - clean_total:
+        usage: "GAUGE"
+        description: "Total clean curated records processed by successful TP2 Spark runs"
+    - rejected_total:
+        usage: "GAUGE"
+        description: "Total rejected records processed by successful TP2 Spark runs"
+
+pg_tp2_latest_pipeline_run:
+  query: |
+    SELECT
+      EXTRACT(EPOCH FROM COALESCE(MAX(completed_at), TIMESTAMPTZ '1970-01-01'))::float AS last_completed_timestamp
+    FROM tp2_pipeline_run
+  metrics:
+    - last_completed_timestamp:
+        usage: "GAUGE"
+        description: "Completion timestamp of the latest TP2 pipeline run"

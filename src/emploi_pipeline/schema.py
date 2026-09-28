@@ -12,11 +12,11 @@ import psycopg
 
 from .connection import get_connection
 
-SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
+SQL_DIR = Path(__file__).resolve().parents[2] / "database" / "schema"
 
 
 def _run_script(connection: psycopg.Connection, filename: str) -> None:
-    """Lit et exécute un fichier SQL du dossier sql/ dans une transaction."""
+    """Lit et exécute un fichier SQL de schéma dans une transaction."""
     script_path = SQL_DIR / filename
     sql_text = script_path.read_text(encoding="utf-8")
     with connection.cursor() as cursor:

@@ -14,9 +14,9 @@ import argparse
 
 from dotenv import load_dotenv
 
-from src.connection import get_connection
-from src.ingest import sync_all_departements, sync_from_api
-from src.schema import initialize_database
+from src.emploi_pipeline.connection import get_connection
+from src.emploi_pipeline.ingest import sync_all_departements, sync_from_api
+from src.emploi_pipeline.schema import initialize_database
 
 load_dotenv()
 
@@ -66,8 +66,8 @@ def main() -> None:
     parser.add_argument(
         "--init",
         action="store_true",
-        help="Recrée le schéma (sql/01_schema.sql) et charge le jeu de données "
-        "de test (sql/02_seed.sql).",
+        help="Recrée le schéma (database/schema/01_schema.sql) et charge le jeu "
+        "de données de test (database/schema/02_seed.sql).",
     )
     parser.add_argument(
         "--sync-api",
@@ -151,4 +151,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

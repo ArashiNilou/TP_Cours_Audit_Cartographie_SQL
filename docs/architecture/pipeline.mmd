@@ -1,24 +1,29 @@
 flowchart LR
-    FT[France Travail API<br/>Offres d'emploi v2] --> Producer[Python producer<br/>polling continu]
-    Producer --> Kafka[(Kafka KRaft<br/>topic france-travail.offres.raw)]
-    Geo[Geo API gouvernementale<br/>communes INSEE] --> Communes[Communes collector<br/>periodique]
-    Communes --> LakeRawCommunes[/Data Lake<br/>raw/communes/]
-    Kafka --> Aggregator[Raw aggregator<br/>commit apres ecriture durable]
-    Aggregator --> LakeRawFT[(Volume data_lake<br/>raw/france_travail)]
-    LakeRawCommunes --> Aggregator
-    Aggregator --> LakeAgg[(Volume data_lake<br/>aggregated/offres JSONL)]
-    LakeAgg --> Spark[PySpark batch<br/>validation dedupe curation]
-    Spark --> LakeCurated[(Volume data_lake<br/>curated/offres Parquet)]
-    Spark --> LakeQuarantine[(Volume data_lake<br/>quarantine JSON)]
-    Spark --> Postgres[(PostgreSQL<br/>volume pgdata<br/>schéma métier 3NF + audit pipeline)]
-    Postgres --> Metabase[Metabase<br/>dataviz]
-    Postgres --> Dash[Plotly Dash<br/>dataviz interactive]
-    Postgres --> PgExporter[PostgreSQL exporter]
-    Kafka --> KafkaExporter[Kafka exporter]
-    Producer --> Prometheus[Prometheus]
-    Communes --> Prometheus
-    Aggregator --> Prometheus
+    %% Cartographie physique du pipeline : composants, formats, fréquences
+    FT[API France Travail<br/>Offres d'emploi v2<br/>JSON, OAuth2] -->|toutes les 15 min| Producer[ft-producer<br/>Python]
+    Producer -->|événement tp2.offer.v1<br/>clé = source_offer_id| Kafka[(Kafka KRaft<br/>topic france-travail.offres.raw<br/>3 partitions)]
+    Geo[API Géo<br/>communes INSEE<br/>JSON] -->|1 fois par jour| Communes[communes-collector<br/>Python]
+    Communes -->|JSON| LakeRawCommunes[(Data Lake<br/>raw/communes<br/>_latest.json)]
+    Kafka --> Aggregator[raw-aggregator<br/>offset validé après écriture]
+    LakeRawCommunes -->|rafraîchi toutes les 5 min| Aggregator
+    Aggregator -->|JSON| LakeRawFT[(Data Lake<br/>raw/france_travail)]
+    Aggregator -->|JSONL tp2.aggregated_offer.v1| LakeAgg[(Data Lake<br/>aggregated/offres)]
+    Aggregator -->|événements invalides| LakeQuarAgg[(Data Lake<br/>quarantine/aggregator)]
+    LakeAgg -->|toutes les 30 min| Spark[spark-batch PySpark<br/>validation, dédoublonnage]
+    Spark -->|Parquet| LakeCurated[(Data Lake<br/>curated/offres)]
+    Spark -->|JSON + motif| LakeQuarantine[(Data Lake<br/>quarantine/spark)]
+    Spark -->|SQL, upsert| Postgres[(PostgreSQL 16<br/>base emploie<br/>3NF + tp2_* + tp3_*)]
+    Quality[Scripts qualité TP3<br/>audit, nettoyage, contrôle] <-->|SQL| Postgres
+    Postgres --> Metabase[Metabase<br/>tableaux de bord]
+    Postgres -->|cache 60 s| Dash[Plotly Dash<br/>application web]
+    LakeRawFT -.->|lecture seule<br/>fiche détaillée| Dash
+    Postgres --> PgExporter[postgres-exporter]
+    Kafka --> KafkaExporter[kafka-exporter]
+    Producer -->|/metrics| Prometheus[Prometheus]
+    Communes -->|/metrics| Prometheus
+    Aggregator -->|/metrics| Prometheus
     PgExporter --> Prometheus
     KafkaExporter --> Prometheus
-    Prometheus --> Grafana[Grafana<br/>volume grafana_data<br/>dashboard provisionne]
+    CAdvisor[cAdvisor<br/>conteneurs] --> Prometheus
+    Prometheus --> Grafana[Grafana<br/>tableau de bord provisionné]
     Kafka --> KafkaUI[Kafka UI]

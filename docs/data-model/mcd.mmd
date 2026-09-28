@@ -7,22 +7,24 @@ erDiagram
     COMPETENCE ||--o{ EXIGENCE : "est requise par"
 
     COMMUNE {
-        string code_insee
+        string code_insee PK
         string code_postal
         string nom_commune
         decimal latitude
         decimal longitude
     }
     ENTREPRISE {
+        int entreprise_id PK
         string raison_sociale
         boolean entreprise_anonyme
     }
     METIER_ROME {
-        string code_rome
+        string rome_code PK
         string libelle_fiche_metier
         string domaine_professionnel
     }
     OFFRE {
+        int offre_id PK
         string source_offre_id
         string libelle_poste
         string description
@@ -32,6 +34,7 @@ erDiagram
         decimal salaire_brut_annuel_estime
     }
     COMPETENCE {
+        int competence_id PK
         string libelle_competence
         string type_competence
     }

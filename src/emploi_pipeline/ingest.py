@@ -46,7 +46,7 @@ TYPES_CONTRAT_VALIDES = {"CDI", "CDD", "MIS", "SAI", "CCE"}
 # le secteur d'activité de l'entreprise recruteuse (NAF), une notion distincte
 # du domaine professionnel du métier, et ne doit donc pas être utilisé ici.
 ROME_GRANDS_DOMAINES: dict[str, str] = {
-    "A": "Arts et façonnage d'ouvrages d'art",
+    "A": "Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux",
     "B": "Arts et façonnage d'ouvrages d'art",
     "C": "Banque, assurance, immobilier",
     "D": "Commerce, vente et grande distribution",

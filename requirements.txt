@@ -1,5 +1,18 @@
+# Dépendances Python uniques du projet (producteurs, agrégateur, Spark, dataviz, tests)
+
+# Base de données et configuration
 psycopg[binary]>=3.2,<4
-requests>=2.31,<3
 python-dotenv>=1.0,<2
+
+# Ingestion et messagerie
+requests>=2.31,<3
 kafka-python>=2.0.2,<3
+
+# Supervision
 prometheus-client>=0.20,<1
+
+# Tableau de bord
+dash>=2.18,<3
+plotly>=5.24,<6
+pandas>=2.2,<3
+gunicorn>=22,<24

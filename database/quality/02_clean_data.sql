@@ -141,6 +141,29 @@ WHERE salaire_brut_annuel_estime <= 0
    OR salaire_brut_annuel_estime < 1000
    OR salaire_brut_annuel_estime > 250000;
 
+-- R04 - Domaine professionnel ROME "A" mal libellé par l'ancien parseur.
+-- La nomenclature ROME 4.0 associe la lettre A à l'agriculture, pas aux arts.
+INSERT INTO tp3_cleaning_log (
+    rule_code, table_name, record_key, column_name,
+    old_value, new_value, justification
+)
+SELECT
+    'R04_DOMAINE_ROME',
+    'metier_rome',
+    rome_code,
+    'domaine_professionnel',
+    domaine_professionnel,
+    'Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux',
+    'Code ROME en A : grand domaine officiel Agriculture (nomenclature ROME 4.0).'
+FROM metier_rome
+WHERE rome_code LIKE 'A%'
+  AND domaine_professionnel <> 'Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux';
+
+UPDATE metier_rome
+SET domaine_professionnel = 'Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux'
+WHERE rome_code LIKE 'A%'
+  AND domaine_professionnel <> 'Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux';
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_competence_normalized_label
     ON competence (
         (lower(regexp_replace(btrim(libelle_competence), '\s+', ' ', 'g')))

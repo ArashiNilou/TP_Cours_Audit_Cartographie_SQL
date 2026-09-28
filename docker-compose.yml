@@ -223,7 +223,8 @@ services:
 
   dataviz:
     build:
-      context: ./apps/dataviz
+      context: .
+      dockerfile: apps/dataviz/Dockerfile
     container_name: dataviz_emploi
     restart: unless-stopped
     depends_on:

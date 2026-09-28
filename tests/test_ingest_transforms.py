@@ -1,9 +1,24 @@
 import unittest
 
-from src.emploi_pipeline.ingest import parse_salaire_annuel, transform_offre
+from src.emploi_pipeline.ingest import (
+    parse_salaire_annuel,
+    resolve_domaine_professionnel,
+    transform_offre,
+)
 
 
 class IngestTransformsTest(unittest.TestCase):
+    def test_resolve_domaine_professionnel_by_rome_letter(self) -> None:
+        self.assertEqual(
+            resolve_domaine_professionnel("A1203"),
+            "Agriculture et pêche, espaces naturels et espaces verts, soins aux animaux",
+        )
+        self.assertEqual(
+            resolve_domaine_professionnel("B1601"),
+            "Arts et façonnage d'ouvrages d'art",
+        )
+        self.assertEqual(resolve_domaine_professionnel(None), "Non renseigné")
+
     def test_parse_salaire_annuel_range(self) -> None:
         self.assertEqual(
             parse_salaire_annuel("Annuel de 38000.0 Euros a 45000.0 Euros"),

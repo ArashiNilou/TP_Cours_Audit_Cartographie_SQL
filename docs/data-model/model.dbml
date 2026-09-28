@@ -74,3 +74,103 @@ Ref: offre.entreprise_id > entreprise.entreprise_id
 Ref: offre.code_insee > commune.code_insee
 Ref: exigence_offre.offre_id > offre.offre_id
 Ref: exigence_offre.competence_id > competence.competence_id
+
+// -----------------------------------------------------------------------------
+// Tables techniques du pipeline (TP2) et de la qualité (TP3)
+// Elles ne font pas partie du modèle métier 3NF mais complètent le schéma
+// physique : traçabilité des traitements, enrichissement et audit qualité.
+// -----------------------------------------------------------------------------
+
+Table tp2_pipeline_run {
+  run_id varchar(64) [pk, note: "UUID hexadécimal d'une exécution PySpark"]
+  started_at timestamptz [not null, default: `now()`]
+  completed_at timestamptz
+  status varchar(20) [not null, note: "running, success, failed, no_input"]
+  raw_count integer [not null, default: 0]
+  clean_count integer [not null, default: 0]
+  rejected_count integer [not null, default: 0]
+  input_path text
+  curated_path text
+  quarantine_path text
+  error_message text
+
+  indexes {
+    started_at [name: "idx_tp2_pipeline_run_started_at"]
+  }
+}
+
+Table tp2_offre_enrichment {
+  source_offre_id varchar(20) [pk, note: "FK vers offre.source_offre_id"]
+  commune_reference_status varchar(20) [not null, note: "matched, not_found, missing_source2"]
+  geo_nom_commune varchar(100)
+  geo_code_postal varchar(5)
+  geo_longitude decimal(9,6)
+  geo_latitude decimal(9,6)
+  aggregated_at timestamptz
+}
+
+Table tp3_quality_run {
+  run_id bigint [pk, increment]
+  phase varchar(30) [not null, note: "before_cleaning, after_cleaning, after_pipeline_reload, monitoring"]
+  executed_at timestamptz [not null, default: `now()`]
+  total_offres bigint [not null, default: 0]
+  notes text
+  baseline_run_id bigint [note: "Audit de référence pour la comparaison avant / après"]
+}
+
+Table tp3_quality_result {
+  run_id bigint [pk]
+  control_code varchar(10) [pk, note: "C01 à C17"]
+  dimension varchar(20) [not null, note: "completude, unicite, validite, coherence, integrite"]
+  control_label text [not null]
+  severity varchar(10) [not null, note: "INFO, LOW, MEDIUM, HIGH"]
+  anomaly_count bigint [not null]
+  population_count bigint [not null]
+  anomaly_rate_pct decimal(8,4) [not null]
+  result_status varchar(10) [not null, note: "PASS, WARN, FAIL"]
+  decision text [not null]
+
+  indexes {
+    (run_id, dimension) [name: "idx_tp3_quality_result_dimension"]
+  }
+}
+
+Table tp3_cleaning_log {
+  cleaning_id bigint [pk, increment]
+  executed_at timestamptz [not null, default: `now()`]
+  rule_code varchar(20) [not null, note: "R01_COMPETENCE, R02_ENTREPRISE, R03_SALAIRE, R04_DOMAINE_ROME"]
+  table_name varchar(100) [not null]
+  record_key text [not null]
+  column_name varchar(100) [not null]
+  old_value text
+  new_value text
+  justification text [not null]
+
+  indexes {
+    (rule_code, executed_at) [name: "idx_tp3_cleaning_log_rule"]
+  }
+}
+
+Ref: tp2_offre_enrichment.source_offre_id - offre.source_offre_id [delete: cascade, update: cascade]
+Ref: tp3_quality_result.run_id > tp3_quality_run.run_id [delete: cascade]
+Ref: tp3_quality_run.baseline_run_id > tp3_quality_run.run_id [delete: set null]
+
+TableGroup metier_3nf {
+  commune
+  entreprise
+  metier_rome
+  competence
+  offre
+  exigence_offre
+}
+
+TableGroup pipeline_tp2 {
+  tp2_pipeline_run
+  tp2_offre_enrichment
+}
+
+TableGroup qualite_tp3 {
+  tp3_quality_run
+  tp3_quality_result
+  tp3_cleaning_log
+}

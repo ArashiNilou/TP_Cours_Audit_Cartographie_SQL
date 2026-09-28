@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY app.py /app/app.py
+COPY apps/dataviz/app.py /app/app.py
 
 EXPOSE 8050
 

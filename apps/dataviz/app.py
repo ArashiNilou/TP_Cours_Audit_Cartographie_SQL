@@ -1,10 +1,16 @@
-"""Dashboard interactif Plotly Dash alimenté par la base PostgreSQL du TP.
+"""Dashboard interactif Plotly Dash alimenté par la base PostgreSQL du projet.
 
-Toutes les données sont relues dans PostgreSQL à chaque rafraîchissement :
-le dashboard montre donc toujours l'état produit par le pipeline Spark.
+Les données sont chargées en mémoire puis rafraîchies en arrière-plan toutes
+les DATAVIZ_REFRESH_SECONDS secondes. Les filtres travaillent uniquement sur
+ce cache : ils répondent sans relancer de requête SQL.
 """
 
+import math
+import operator
 import os
+import re
+import threading
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -14,6 +20,16 @@ from dash import Dash, Input, Output, dash_table, dcc, html
 
 REFRESH_SECONDS = int(os.getenv("DATAVIZ_REFRESH_SECONDS", "60"))
 TOP_COMPETENCES = 15
+TABLE_PAGE_SIZE = 10
+TABLE_COLUMNS = [
+    {"name": "Offre", "id": "source_offre_id"},
+    {"name": "Poste", "id": "libelle_poste"},
+    {"name": "Contrat", "id": "type_contrat"},
+    {"name": "Commune", "id": "nom_commune"},
+    {"name": "Métier ROME", "id": "libelle_fiche_metier"},
+    {"name": "Salaire (€ / an)", "id": "salaire", "type": "numeric"},
+    {"name": "Publication", "id": "publication"},
+]
 
 OFFRES_SQL = """
 SELECT
@@ -84,6 +100,8 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str | None]:
             for column in ("salaire", "latitude", "longitude"):
                 offres[column] = pd.to_numeric(offres[column], errors="coerce")
             offres["entreprise_anonyme"] = offres["entreprise_anonyme"].fillna(False).astype(bool)
+            offres["date_publication"] = pd.to_datetime(offres["date_publication"], errors="coerce")
+            offres["publication"] = offres["date_publication"].dt.strftime("%Y-%m-%d")
             competences = _query(connection, COMPETENCES_SQL)
             try:
                 runs = _query(connection, RUNS_SQL)
@@ -94,6 +112,35 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str | None]:
     except psycopg.Error as error:
         empty = pd.DataFrame()
         return empty, empty, empty, f"Base PostgreSQL injoignable : {error}"
+
+
+_cache_lock = threading.Lock()
+_cache: dict = {"data": None}
+
+
+def _reload_cache() -> None:
+    offres, competences, runs, error = load_data()
+    with _cache_lock:
+        previous = _cache["data"]
+        if error and previous is not None:
+            # Base momentanément indisponible : on garde les dernières données valides.
+            offres, competences, runs = previous[:3]
+        _cache["data"] = (offres, competences, runs, error)
+
+
+def _refresh_loop() -> None:
+    while True:
+        time.sleep(REFRESH_SECONDS)
+        _reload_cache()
+
+
+def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str | None]:
+    """Renvoie les données en mémoire ; le premier appel lance le rafraîchissement."""
+    with _cache_lock:
+        if _cache["data"] is None:
+            _cache["data"] = load_data()
+            threading.Thread(target=_refresh_loop, daemon=True).start()
+        return _cache["data"]
 
 
 def empty_figure(message: str) -> go.Figure:
@@ -112,6 +159,13 @@ def kpi_card(label: str, value: str) -> html.Div:
 
 app = Dash(__name__, title="Plateforme Emploi - Data Viz")
 server = app.server
+
+
+def _graph_card(graph_id: str) -> html.Div:
+    return html.Div(
+        dcc.Loading(dcc.Graph(id=graph_id), type="circle", delay_show=400),
+        className="card",
+    )
 
 
 @server.route("/health")
@@ -170,24 +224,35 @@ app.layout = html.Div(
                 html.Div(id="kpis", className="kpis"),
                 html.Div(
                     [
-                        html.Div(dcc.Graph(id="graph-contrats"), className="card"),
-                        html.Div(dcc.Graph(id="graph-competences"), className="card"),
-                        html.Div(dcc.Graph(id="graph-carte"), className="card"),
-                        html.Div(dcc.Graph(id="graph-salaires"), className="card"),
-                        html.Div(dcc.Graph(id="graph-publication"), className="card"),
-                        html.Div(dcc.Graph(id="graph-pipeline"), className="card"),
+                        _graph_card("graph-contrats"),
+                        _graph_card("graph-competences"),
+                        _graph_card("graph-carte"),
+                        _graph_card("graph-salaires"),
+                        _graph_card("graph-publication"),
+                        _graph_card("graph-pipeline"),
                     ],
                     className="grid",
                 ),
                 html.Div(
-                    dash_table.DataTable(
-                        id="table-offres",
-                        page_size=10,
-                        sort_action="native",
-                        filter_action="native",
-                        style_table={"overflowX": "auto"},
-                        style_cell={"fontFamily": "Segoe UI, Arial", "fontSize": 13, "textAlign": "left"},
-                        style_header={"fontWeight": "700", "backgroundColor": "#e5e7eb"},
+                    dcc.Loading(
+                        dash_table.DataTable(
+                            id="table-offres",
+                            columns=TABLE_COLUMNS,
+                            page_current=0,
+                            page_size=TABLE_PAGE_SIZE,
+                            page_action="custom",
+                            sort_action="custom",
+                            sort_mode="single",
+                            sort_by=[],
+                            filter_action="custom",
+                            filter_query="",
+                            filter_options={"case": "insensitive"},
+                            style_table={"overflowX": "auto"},
+                            style_cell={"fontFamily": "Segoe UI, Arial", "fontSize": 13, "textAlign": "left"},
+                            style_header={"fontWeight": "700", "backgroundColor": "#e5e7eb"},
+                        ),
+                        type="circle",
+                        delay_show=400,
                     ),
                     className="card",
                 ),
@@ -214,162 +279,229 @@ def _apply_filters(offres: pd.DataFrame, contrats, domaines, communes) -> pd.Dat
     return offres
 
 
+def _figure_layout(figure: go.Figure) -> go.Figure:
+    figure.update_layout(template="plotly_white", margin={"l": 10, "r": 10, "t": 50, "b": 10})
+    return figure
+
+
 @app.callback(
     Output("error-banner", "children"),
     Output("filtre-contrat", "options"),
     Output("filtre-domaine", "options"),
     Output("filtre-commune", "options"),
-    Output("kpis", "children"),
-    Output("graph-contrats", "figure"),
-    Output("graph-competences", "figure"),
-    Output("graph-carte", "figure"),
-    Output("graph-salaires", "figure"),
-    Output("graph-publication", "figure"),
     Output("graph-pipeline", "figure"),
-    Output("table-offres", "data"),
-    Output("table-offres", "columns"),
-    Input("filtre-contrat", "value"),
-    Input("filtre-domaine", "value"),
-    Input("filtre-commune", "value"),
     Input("refresh", "n_intervals"),
 )
-def update_dashboard(contrats, domaines, communes, _n_intervals):
-    offres_all, competences, runs, error = load_data()
+def update_context(_n_intervals):
+    """?l?ments ind?pendants des filtres : bandeau d'erreur, listes et suivi Spark."""
+    offres_all, _competences, runs, error = get_data()
     banner = html.Div(error, className="error") if error else None
-    no_data = "Aucune offre pour ces filtres"
-
-    if offres_all.empty:
-        empty = empty_figure(error or "Aucune offre en base : attendez un passage de Spark")
-        kpis = [kpi_card(label, "0") for label in ("Offres", "Communes", "Entreprises", "Compétences", "Salaire moyen")]
-        return banner, [], [], [], kpis, empty, empty, empty, empty, empty, empty, [], []
-
-    offres = _apply_filters(offres_all, contrats, domaines, communes)
-    competences = competences[competences["offre_id"].isin(offres["offre_id"])]
-
-    salaire_moyen = offres["salaire"].mean()
-    kpis = [
-        kpi_card("Offres", f"{len(offres)}"),
-        kpi_card("Communes", f"{offres['code_insee'].nunique()}"),
-        kpi_card("Entreprises", f"{offres.loc[~offres['entreprise_anonyme'], 'raison_sociale'].nunique()}"),
-        kpi_card("Compétences distinctes", f"{competences['libelle_competence'].nunique()}"),
-        kpi_card("Salaire moyen estimé", "n.c." if pd.isna(salaire_moyen) else f"{salaire_moyen:,.0f} €".replace(",", " ")),
-    ]
-
-    if offres.empty:
-        fig_empty = empty_figure(no_data)
-        fig_contrats = fig_competences = fig_carte = fig_salaires = fig_publication = fig_empty
-    else:
-        par_contrat = offres.groupby("type_contrat").size().reset_index(name="offres").sort_values("offres", ascending=False)
-        fig_contrats = px.bar(
-            par_contrat, x="type_contrat", y="offres", color="type_contrat", text="offres",
-            title="Offres par type de contrat", labels={"type_contrat": "Contrat", "offres": "Nombre d'offres"},
-        )
-        fig_contrats.update_layout(showlegend=False)
-
-        if competences.empty:
-            fig_competences = empty_figure("Aucune compétence renseignée")
-        else:
-            top = competences["libelle_competence"].value_counts().head(TOP_COMPETENCES).index
-            par_comp = (
-                competences[competences["libelle_competence"].isin(top)]
-                .groupby(["libelle_competence", "exigence"]).size().reset_index(name="offres")
-            )
-            fig_competences = px.bar(
-                par_comp, x="offres", y="libelle_competence", color="exigence", orientation="h",
-                title=f"Top {TOP_COMPETENCES} des compétences demandées",
-                labels={"libelle_competence": "", "offres": "Nombre d'offres", "exigence": "Niveau"},
-                color_discrete_map={"Exigée": "#dc2626", "Souhaitée": "#2563eb"},
-            )
-            fig_competences.update_layout(yaxis={"categoryorder": "total ascending"})
-
-        geo = (
-            offres.dropna(subset=["latitude", "longitude"])
-            .groupby(["nom_commune", "latitude", "longitude"])
-            .agg(offres=("offre_id", "count"), salaire_moyen=("salaire", "mean"))
-            .reset_index()
-        )
-        if geo.empty:
-            fig_carte = empty_figure("Aucune commune géolocalisée")
-        else:
-            fig_carte = px.scatter_map(
-                geo, lat="latitude", lon="longitude", size="offres", color="offres",
-                hover_name="nom_commune", hover_data={"offres": True, "salaire_moyen": ":.0f", "latitude": False, "longitude": False},
-                zoom=4.3, center={"lat": 46.6, "lon": 2.4}, size_max=30, map_style="open-street-map",
-                title="Carte des offres par commune", color_continuous_scale="Viridis",
-            )
-            fig_carte.update_layout(margin={"l": 0, "r": 0, "t": 40, "b": 0})
-
-        salaires = offres.dropna(subset=["salaire"])
-        if salaires.empty:
-            fig_salaires = empty_figure("Aucun salaire exploitable")
-        else:
-            fig_salaires = px.box(
-                salaires, x="type_contrat", y="salaire", color="type_contrat", points="all",
-                hover_data=["libelle_poste", "nom_commune"],
-                title="Salaire brut annuel estimé par contrat",
-                labels={"type_contrat": "Contrat", "salaire": "Salaire (€ / an)"},
-            )
-            fig_salaires.update_layout(showlegend=False)
-
-        par_jour = (
-            offres.assign(date_publication=pd.to_datetime(offres["date_publication"]))
-            .groupby(["date_publication", "type_contrat"]).size().reset_index(name="offres")
-        )
-        fig_publication = px.bar(
-            par_jour, x="date_publication", y="offres", color="type_contrat",
-            title="Offres par date de publication",
-            labels={"date_publication": "Date", "offres": "Nombre d'offres", "type_contrat": "Contrat"},
-        )
 
     if runs.empty:
-        fig_pipeline = empty_figure("Aucun passage Spark enregistré")
+        fig_pipeline = empty_figure("Aucun passage Spark enregistr?")
     else:
         runs_long = runs.melt(
             id_vars="started_at", value_vars=["raw_count", "clean_count", "rejected_count"],
             var_name="type", value_name="lignes",
         )
         runs_long["type"] = runs_long["type"].map(
-            {"raw_count": "Brutes (raw)", "clean_count": "Propres (clean)", "rejected_count": "Rejetées"}
+            {"raw_count": "Brutes (raw)", "clean_count": "Propres (clean)", "rejected_count": "Rejet?es"}
         )
-        fig_pipeline = px.line(
+        fig_pipeline = _figure_layout(px.line(
             runs_long, x="started_at", y="lignes", color="type", markers=True,
             title="Pipeline : offres brutes vs propres par passage Spark",
             labels={"started_at": "Passage Spark", "lignes": "Nombre d'offres", "type": ""},
-            color_discrete_map={"Brutes (raw)": "#6b7280", "Propres (clean)": "#16a34a", "Rejetées": "#dc2626"},
-        )
+            color_discrete_map={"Brutes (raw)": "#6b7280", "Propres (clean)": "#16a34a", "Rejet?es": "#dc2626"},
+        ))
 
-    for figure in (fig_contrats, fig_competences, fig_salaires, fig_publication, fig_pipeline):
-        figure.update_layout(template="plotly_white", margin={"l": 10, "r": 10, "t": 50, "b": 10})
-
-    table = offres[
-        ["source_offre_id", "libelle_poste", "type_contrat", "nom_commune", "libelle_fiche_metier", "salaire", "date_publication"]
-    ].sort_values("date_publication", ascending=False)
-    table = table.assign(date_publication=table["date_publication"].astype(str))
-    columns = [
-        {"name": "Offre", "id": "source_offre_id"},
-        {"name": "Poste", "id": "libelle_poste"},
-        {"name": "Contrat", "id": "type_contrat"},
-        {"name": "Commune", "id": "nom_commune"},
-        {"name": "Métier ROME", "id": "libelle_fiche_metier"},
-        {"name": "Salaire (€ / an)", "id": "salaire", "type": "numeric"},
-        {"name": "Publication", "id": "date_publication"},
-    ]
-
+    if offres_all.empty:
+        return banner, [], [], [], fig_pipeline
     return (
         banner,
         _options(offres_all["type_contrat"]),
         _options(offres_all["domaine_professionnel"]),
         _options(offres_all["nom_commune"]),
-        kpis,
-        fig_contrats,
-        fig_competences,
-        fig_carte,
-        fig_salaires,
-        fig_publication,
         fig_pipeline,
-        table.to_dict("records"),
-        columns,
     )
+
+
+@app.callback(
+    Output("kpis", "children"),
+    Output("graph-contrats", "figure"),
+    Output("graph-competences", "figure"),
+    Output("graph-carte", "figure"),
+    Output("graph-salaires", "figure"),
+    Output("graph-publication", "figure"),
+    Input("filtre-contrat", "value"),
+    Input("filtre-domaine", "value"),
+    Input("filtre-commune", "value"),
+    Input("refresh", "n_intervals"),
+)
+def update_dashboard(contrats, domaines, communes, _n_intervals):
+    offres_all, competences, _runs, error = get_data()
+
+    if offres_all.empty:
+        empty = empty_figure(error or "Aucune offre en base : attendez un passage de Spark")
+        kpis = [kpi_card(label, "0") for label in ("Offres", "Communes", "Entreprises", "Comp?tences", "Salaire moyen")]
+        return kpis, empty, empty, empty, empty, empty
+
+    offres = _apply_filters(offres_all, contrats, domaines, communes)
+    if contrats or domaines or communes:
+        competences = competences[competences["offre_id"].isin(offres["offre_id"])]
+
+    salaire_moyen = offres["salaire"].mean()
+    kpis = [
+        kpi_card("Offres", f"{len(offres)}"),
+        kpi_card("Communes", f"{offres['code_insee'].nunique()}"),
+        kpi_card("Entreprises", f"{offres.loc[~offres['entreprise_anonyme'], 'raison_sociale'].nunique()}"),
+        kpi_card("Comp?tences distinctes", f"{competences['libelle_competence'].nunique()}"),
+        kpi_card("Salaire moyen estim?", "n.c." if pd.isna(salaire_moyen) else f"{salaire_moyen:,.0f} ?".replace(",", " ")),
+    ]
+
+    if offres.empty:
+        fig_empty = empty_figure("Aucune offre pour ces filtres")
+        return kpis, fig_empty, fig_empty, fig_empty, fig_empty, fig_empty
+
+    par_contrat = offres.groupby("type_contrat").size().reset_index(name="offres").sort_values("offres", ascending=False)
+    fig_contrats = px.bar(
+        par_contrat, x="type_contrat", y="offres", color="type_contrat", text="offres",
+        title="Offres par type de contrat", labels={"type_contrat": "Contrat", "offres": "Nombre d'offres"},
+    )
+    fig_contrats.update_layout(showlegend=False)
+
+    if competences.empty:
+        fig_competences = empty_figure("Aucune comp?tence renseign?e")
+    else:
+        top = competences["libelle_competence"].value_counts().head(TOP_COMPETENCES).index
+        par_comp = (
+            competences[competences["libelle_competence"].isin(top)]
+            .groupby(["libelle_competence", "exigence"]).size().reset_index(name="offres")
+        )
+        fig_competences = px.bar(
+            par_comp, x="offres", y="libelle_competence", color="exigence", orientation="h",
+            title=f"Top {TOP_COMPETENCES} des comp?tences demand?es",
+            labels={"libelle_competence": "", "offres": "Nombre d'offres", "exigence": "Niveau"},
+            color_discrete_map={"Exig?e": "#dc2626", "Souhait?e": "#2563eb"},
+        )
+        fig_competences.update_layout(yaxis={"categoryorder": "total ascending"})
+
+    geo = (
+        offres.dropna(subset=["latitude", "longitude"])
+        .groupby(["nom_commune", "latitude", "longitude"])
+        .agg(offres=("offre_id", "count"), salaire_moyen=("salaire", "mean"))
+        .reset_index()
+    )
+    if geo.empty:
+        fig_carte = empty_figure("Aucune commune g?olocalis?e")
+    else:
+        fig_carte = px.scatter_map(
+            geo, lat="latitude", lon="longitude", size="offres", color="offres",
+            hover_name="nom_commune", hover_data={"offres": True, "salaire_moyen": ":.0f", "latitude": False, "longitude": False},
+            zoom=4.3, center={"lat": 46.6, "lon": 2.4}, size_max=30, map_style="open-street-map",
+            title="Carte des offres par commune", color_continuous_scale="Viridis",
+        )
+        fig_carte.update_layout(margin={"l": 0, "r": 0, "t": 40, "b": 0})
+
+    salaires = offres.dropna(subset=["salaire"])
+    if salaires.empty:
+        fig_salaires = empty_figure("Aucun salaire exploitable")
+    else:
+        # Seuls les points atypiques sont dessin?s : la figure reste l?g?re.
+        fig_salaires = px.box(
+            salaires, x="type_contrat", y="salaire", color="type_contrat", points="outliers",
+            title="Salaire brut annuel estim? par contrat",
+            labels={"type_contrat": "Contrat", "salaire": "Salaire (? / an)"},
+        )
+        fig_salaires.update_layout(showlegend=False)
+
+    par_jour = offres.groupby(["date_publication", "type_contrat"]).size().reset_index(name="offres")
+    fig_publication = px.bar(
+        par_jour, x="date_publication", y="offres", color="type_contrat",
+        title="Offres par date de publication",
+        labels={"date_publication": "Date", "offres": "Nombre d'offres", "type_contrat": "Contrat"},
+    )
+
+    for figure in (fig_contrats, fig_competences, fig_salaires, fig_publication):
+        _figure_layout(figure)
+
+    return kpis, fig_contrats, fig_competences, fig_carte, fig_salaires, fig_publication
+
+
+_TABLE_COLUMN_IDS = [column["id"] for column in TABLE_COLUMNS]
+_FILTER_PATTERN = re.compile(
+    r"^\{(?P<column>[^}]+)\}\s+(?:[is](?=\S))?(?P<op>>=|<=|!=|=|<|>|ge|le|lt|gt|ne|eq|contains|datestartswith)\s+(?P<value>.+)$"
+)
+_COMPARATORS = {
+    "=": operator.eq, "eq": operator.eq, "!=": operator.ne, "ne": operator.ne,
+    "<": operator.lt, "lt": operator.lt, "<=": operator.le, "le": operator.le,
+    ">": operator.gt, "gt": operator.gt, ">=": operator.ge, "ge": operator.ge,
+}
+
+
+def _filter_table(table: pd.DataFrame, filter_query: str) -> pd.DataFrame:
+    """Applique la syntaxe de filtre DataTable (`{col} op valeur && ...`) c?t? serveur."""
+    for clause in (filter_query or "").split(" && "):
+        match = _FILTER_PATTERN.match(clause.strip())
+        if not match or match["column"] not in _TABLE_COLUMN_IDS:
+            continue
+        column, op = match["column"], match["op"]
+        value = match["value"].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'`":
+            value = value[1:-1]
+        series = table[column]
+
+        if op in ("contains", "datestartswith"):
+            text = series.astype("string").fillna("")
+            if op == "contains":
+                mask = text.str.contains(value, case=False, regex=False)
+            else:
+                mask = text.str.startswith(value)
+        elif column == "salaire":
+            try:
+                number = float(value)
+            except ValueError:
+                continue
+            mask = _COMPARATORS[op](series, number)
+        else:
+            text = series.astype("string").fillna("").str.lower()
+            mask = _COMPARATORS[op](text, value.lower())
+        table = table[mask.fillna(False).astype(bool)]
+    return table
+
+
+@app.callback(
+    Output("table-offres", "data"),
+    Output("table-offres", "page_count"),
+    Output("table-offres", "page_current"),
+    Input("filtre-contrat", "value"),
+    Input("filtre-domaine", "value"),
+    Input("filtre-commune", "value"),
+    Input("table-offres", "page_current"),
+    Input("table-offres", "page_size"),
+    Input("table-offres", "sort_by"),
+    Input("table-offres", "filter_query"),
+    Input("refresh", "n_intervals"),
+)
+def update_table(contrats, domaines, communes, page_current, page_size, sort_by, filter_query, _n_intervals):
+    """Tableau pagin? c?t? serveur : seules les lignes de la page affich?e sont envoy?es."""
+    offres_all, _competences, _runs, _error = get_data()
+    if offres_all.empty:
+        return [], 1, 0
+
+    table = _apply_filters(offres_all, contrats, domaines, communes)[_TABLE_COLUMN_IDS]
+    table = _filter_table(table, filter_query)
+
+    if sort_by:
+        column = sort_by[0]["column_id"]
+        table = table.sort_values(column, ascending=sort_by[0]["direction"] == "asc", na_position="last")
+    else:
+        table = table.sort_values("publication", ascending=False, na_position="last")
+
+    page_size = page_size or TABLE_PAGE_SIZE
+    page_count = max(1, math.ceil(len(table) / page_size))
+    page_current = min(max(page_current or 0, 0), page_count - 1)
+    start = page_current * page_size
+    return table.iloc[start:start + page_size].to_dict("records"), page_count, page_current
 
 
 if __name__ == "__main__":

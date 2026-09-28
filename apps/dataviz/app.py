@@ -5,20 +5,24 @@ les DATAVIZ_REFRESH_SECONDS secondes. Les filtres travaillent uniquement sur
 ce cache : ils répondent sans relancer de requête SQL.
 """
 
+import json
 import math
 import operator
 import os
 import re
 import threading
 import time
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import psycopg
-from dash import Dash, Input, Output, dash_table, dcc, html
+from dash import Dash, Input, Output, State, ctx, dash_table, dcc, html, no_update
 
 REFRESH_SECONDS = int(os.getenv("DATAVIZ_REFRESH_SECONDS", "60"))
+DATA_LAKE_ROOT = Path(os.getenv("DATA_LAKE_ROOT", "/data-lake"))
+FRANCE_TRAVAIL_OFFER_URL = "https://candidat.francetravail.fr/offres/recherche/detail/{}"
 TOP_COMPETENCES = 15
 TABLE_PAGE_SIZE = 10
 TABLE_COLUMNS = [
@@ -132,6 +136,72 @@ def _refresh_loop() -> None:
     while True:
         time.sleep(REFRESH_SECONDS)
         _reload_cache()
+        _index_raw_offers()
+
+
+_SOURCE_ID_PATTERN = re.compile(r'"source_offer_id"\s*:\s*"([^"]+)"')
+_raw_index_lock = threading.Lock()
+_raw_scan_lock = threading.Lock()
+_raw_index: dict[str, Path] = {}
+_raw_seen: set[Path] = set()
+
+
+def _index_raw_offers() -> None:
+    """Associe chaque identifiant d'offre à son fichier brut du Data Lake.
+
+    Les fichiers bruts sont écrits avec des clés triées : `source_offer_id`
+    se trouve en fin de fichier, on ne lit donc que les derniers octets.
+    Seuls les nouveaux fichiers sont lus à chaque passage.
+    """
+    raw_dir = DATA_LAKE_ROOT / "raw" / "france_travail"
+    if not raw_dir.is_dir() or not _raw_scan_lock.acquire(blocking=False):
+        return
+    try:
+        _scan_raw_dir(raw_dir)
+    finally:
+        _raw_scan_lock.release()
+
+
+def _scan_raw_dir(raw_dir: Path) -> None:
+    found: dict[str, Path] = {}
+    for path in sorted(raw_dir.glob("ingestion_date=*/*.json")):
+        if path in _raw_seen:
+            continue
+        try:
+            with path.open("rb") as handle:
+                handle.seek(max(0, path.stat().st_size - 300))
+                match = _SOURCE_ID_PATTERN.search(handle.read().decode("utf-8", "ignore"))
+        except OSError:
+            continue
+        _raw_seen.add(path)
+        if match:
+            found[match.group(1)] = path
+    with _raw_index_lock:
+        _raw_index.update(found)
+
+
+def load_raw_offer(source_offre_id: str) -> dict:
+    with _raw_index_lock:
+        path = _raw_index.get(source_offre_id)
+    if path is None:
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("payload") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def load_offer_text(source_offre_id: str) -> tuple[str | None, str | None]:
+    """Description et durée de travail, lues à la demande pour ne pas alourdir le cache."""
+    try:
+        with _connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT description, duree_travail FROM offre WHERE source_offre_id = %s", (source_offre_id,)
+            )
+            row = cursor.fetchone()
+    except psycopg.Error:
+        return None, None
+    return (row[0], row[1]) if row else (None, None)
 
 
 def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str | None]:
@@ -139,6 +209,7 @@ def get_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str | None]:
     with _cache_lock:
         if _cache["data"] is None:
             _cache["data"] = load_data()
+            threading.Thread(target=_index_raw_offers, daemon=True).start()
             threading.Thread(target=_refresh_loop, daemon=True).start()
         return _cache["data"]
 
@@ -157,13 +228,25 @@ def kpi_card(label: str, value: str) -> html.Div:
     )
 
 
-app = Dash(__name__, title="Plateforme Emploi - Data Viz")
+app = Dash(
+    __name__,
+    title="Plateforme Emploi - Data Viz",
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
+)
 server = app.server
 
 
-def _graph_card(graph_id: str) -> html.Div:
+def _graph_card(graph_id: str, title: str) -> html.Div:
     return html.Div(
-        dcc.Loading(dcc.Graph(id=graph_id), type="circle", delay_show=400),
+        [html.H2(title, className="card-title"), dcc.Loading(
+            dcc.Graph(
+                id=graph_id,
+                className="graph",
+                config={"responsive": True, "displaylogo": False, "displayModeBar": False},
+            ),
+            type="circle",
+            delay_show=400,
+        )],
         className="card",
     )
 
@@ -178,21 +261,67 @@ app.index_string = """<!DOCTYPE html>
 <head>
 {%metas%}<title>{%title%}</title>{%favicon%}{%css%}
 <style>
-  body { font-family: Segoe UI, Arial, sans-serif; background: #f3f4f6; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: Segoe UI, Arial, sans-serif; background: #f3f4f6; margin: 0; overflow-x: hidden; }
   .header { background: #1e3a8a; color: white; padding: 18px 28px; }
-  .header h1 { margin: 0; font-size: 24px; }
-  .header p { margin: 4px 0 0; opacity: .85; }
-  .container { padding: 18px 28px; }
-  .filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; background: white;
-             padding: 16px; border-radius: 10px; margin-bottom: 16px; }
-  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 16px; }
-  .kpi-card { background: white; border-radius: 10px; padding: 14px; text-align: center; }
-  .kpi-value { font-size: 26px; font-weight: 700; color: #1e3a8a; }
+  .header h1 { margin: 0; font-size: clamp(18px, 2.4vw, 24px); }
+  .header p { margin: 4px 0 0; opacity: .85; font-size: clamp(12px, 1.4vw, 15px); }
+  .container { padding: 18px 28px; max-width: 1800px; margin: 0 auto; }
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;
+             background: white; padding: 16px; border-radius: 10px; margin-bottom: 16px; }
+  .kpis { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+  .kpi-card { background: white; border-radius: 10px; padding: 14px; text-align: center; min-width: 0;
+              flex: 1 1 150px; }
+  .kpi-value { font-size: clamp(20px, 2.2vw, 26px); font-weight: 700; color: #1e3a8a; }
   .kpi-label { color: #6b7280; font-size: 13px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-  .card { background: white; border-radius: 10px; padding: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 16px;
+          margin-bottom: 16px; }
+  .card { background: white; border-radius: 10px; padding: 8px; min-width: 0; }
+  .graph { height: 420px; }
+  .card-title { font-size: 16px; font-weight: 600; color: #1f2937; margin: 6px 8px 0; line-height: 1.3; }
   .error { background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 8px; margin-bottom: 12px; }
   label { font-weight: 600; font-size: 13px; }
+  .table-hint { color: #6b7280; font-size: 13px; margin: 4px 6px 8px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(17, 24, 39, .55); z-index: 1000;
+                   align-items: center; justify-content: center; padding: 24px; }
+  .modal-box { background: white; border-radius: 12px; width: min(900px, 100%); max-height: 90vh;
+               overflow-y: auto; padding: 24px 28px; position: relative; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+  .modal-close { position: absolute; top: 14px; right: 16px; border: none; background: #e5e7eb;
+                 border-radius: 50%; width: 34px; height: 34px; font-size: 18px; cursor: pointer; }
+  .modal-close:hover { background: #d1d5db; }
+  .modal-box h2 { margin: 0 40px 4px 0; color: #1e3a8a; font-size: 22px; }
+  .modal-sub { color: #4b5563; margin-bottom: 14px; }
+  .modal-box h3 { color: #1e3a8a; font-size: 15px; margin: 18px 0 8px; border-bottom: 1px solid #e5e7eb;
+                  padding-bottom: 4px; }
+  .detail-grid { display: grid; grid-template-columns: 220px 1fr; gap: 6px 14px; font-size: 14px; }
+  .detail-grid dt { color: #6b7280; }
+  .detail-grid dd { margin: 0; color: #111827; }
+  .description { white-space: pre-wrap; font-size: 14px; line-height: 1.5; color: #111827; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; margin: 0 6px 6px 0; }
+  .tag-E { background: #fee2e2; color: #991b1b; }
+  .tag-S { background: #dbeafe; color: #1e40af; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  .btn-link { display: inline-block; padding: 9px 16px; border-radius: 8px; text-decoration: none;
+              font-weight: 600; font-size: 14px; }
+  .btn-primary { background: #1e3a8a; color: white; }
+  .btn-secondary { background: #16a34a; color: white; }
+  .no-link { color: #6b7280; font-size: 14px; font-style: italic; align-self: center; }
+  @media (max-width: 768px) {
+    .header { padding: 14px 16px; }
+    .container { padding: 12px; }
+    .filters, .kpis, .grid { gap: 10px; margin-bottom: 10px; }
+    .filters { padding: 12px; }
+    .kpi-card { padding: 10px 6px; flex-basis: 40%; }
+    .card { padding: 4px; }
+    .graph { height: 360px; }
+    .card-title { font-size: 15px; }
+    .modal-overlay { padding: 0; align-items: stretch; }
+    .modal-box { width: 100%; max-height: 100vh; height: 100%; border-radius: 0; padding: 18px 16px 28px; }
+    .modal-box h2 { font-size: 19px; }
+    .detail-grid { grid-template-columns: 1fr; gap: 0; }
+    .detail-grid dt { font-size: 12px; margin-top: 8px; }
+    .btn-link { width: 100%; text-align: center; }
+  }
 </style>
 </head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body>
@@ -224,37 +353,63 @@ app.layout = html.Div(
                 html.Div(id="kpis", className="kpis"),
                 html.Div(
                     [
-                        _graph_card("graph-contrats"),
-                        _graph_card("graph-competences"),
-                        _graph_card("graph-carte"),
-                        _graph_card("graph-salaires"),
-                        _graph_card("graph-publication"),
-                        _graph_card("graph-pipeline"),
+                        _graph_card("graph-contrats", "Offres par type de contrat"),
+                        _graph_card("graph-competences", f"Top {TOP_COMPETENCES} des compétences demandées"),
+                        _graph_card("graph-carte", "Carte des offres par commune"),
+                        _graph_card("graph-salaires", "Salaire brut annuel estimé par contrat"),
+                        _graph_card("graph-publication", "Offres par date de publication"),
+                        _graph_card("graph-pipeline", "Pipeline : offres brutes vs propres par passage Spark"),
                     ],
                     className="grid",
                 ),
                 html.Div(
-                    dcc.Loading(
-                        dash_table.DataTable(
-                            id="table-offres",
-                            columns=TABLE_COLUMNS,
-                            page_current=0,
-                            page_size=TABLE_PAGE_SIZE,
-                            page_action="custom",
-                            sort_action="custom",
-                            sort_mode="single",
-                            sort_by=[],
-                            filter_action="custom",
-                            filter_query="",
-                            filter_options={"case": "insensitive"},
-                            style_table={"overflowX": "auto"},
-                            style_cell={"fontFamily": "Segoe UI, Arial", "fontSize": 13, "textAlign": "left"},
-                            style_header={"fontWeight": "700", "backgroundColor": "#e5e7eb"},
+                    [
+                        html.Div("Cliquez sur une offre pour afficher toute sa fiche et son lien.", className="table-hint"),
+                        dcc.Loading(
+                            dash_table.DataTable(
+                                id="table-offres",
+                                columns=TABLE_COLUMNS,
+                                page_current=0,
+                                page_size=TABLE_PAGE_SIZE,
+                                page_action="custom",
+                                sort_action="custom",
+                                sort_mode="single",
+                                sort_by=[],
+                                filter_action="custom",
+                                filter_query="",
+                                filter_options={"case": "insensitive"},
+                                style_table={"overflowX": "auto", "minWidth": "100%"},
+                                style_cell={"fontFamily": "Segoe UI, Arial", "fontSize": 13, "textAlign": "left",
+                                            "cursor": "pointer", "whiteSpace": "normal", "height": "auto",
+                                            "minWidth": "90px", "maxWidth": "320px", "padding": "6px 8px"},
+                                style_cell_conditional=[
+                                    {"if": {"column_id": "libelle_poste"}, "minWidth": "200px"},
+                                    {"if": {"column_id": "libelle_fiche_metier"}, "minWidth": "180px"},
+                                ],
+                                style_header={"fontWeight": "700", "backgroundColor": "#e5e7eb"},
+                                style_data_conditional=[
+                                    {"if": {"column_id": "libelle_poste"}, "color": "#1d4ed8",
+                                     "textDecoration": "underline", "fontWeight": "600"},
+                                    {"if": {"state": "active"}, "backgroundColor": "#eff6ff", "border": "1px solid #93c5fd"},
+                                ],
+                            ),
+                            type="circle",
+                            delay_show=400,
                         ),
-                        type="circle",
-                        delay_show=400,
-                    ),
+                    ],
                     className="card",
+                ),
+                html.Div(
+                    html.Div(
+                        [
+                            html.Button("✕", id="modal-fermer", className="modal-close", title="Fermer"),
+                            html.Div(id="modal-contenu"),
+                        ],
+                        className="modal-box",
+                    ),
+                    id="offre-modal",
+                    className="modal-overlay",
+                    style={"display": "none"},
                 ),
                 dcc.Interval(id="refresh", interval=REFRESH_SECONDS * 1000),
             ],
@@ -280,8 +435,21 @@ def _apply_filters(offres: pd.DataFrame, contrats, domaines, communes) -> pd.Dat
 
 
 def _figure_layout(figure: go.Figure) -> go.Figure:
-    figure.update_layout(template="plotly_white", margin={"l": 10, "r": 10, "t": 50, "b": 10})
+    # Titre en HTML et légende horizontale au-dessus du tracé : le tracé garde toute la largeur, même sur mobile.
+    figure.update_layout(
+        template="plotly_white",
+        autosize=True,
+        title=None,
+        margin={"l": 10, "r": 10, "t": 30, "b": 10},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.0, "x": 0, "title": {"text": ""}},
+    )
+    figure.update_xaxes(automargin=True)
+    figure.update_yaxes(automargin=True)
     return figure
+
+
+def _short_label(label: str, limit: int = 32) -> str:
+    return label if len(label) <= limit else label[: limit - 1].rstrip() + "…"
 
 
 @app.callback(
@@ -377,13 +545,15 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
             competences[competences["libelle_competence"].isin(top)]
             .groupby(["libelle_competence", "exigence"]).size().reset_index(name="offres")
         )
+        par_comp["competence"] = par_comp["libelle_competence"].map(_short_label)
         fig_competences = px.bar(
-            par_comp, x="offres", y="libelle_competence", color="exigence", orientation="h",
+            par_comp, x="offres", y="competence", color="exigence", orientation="h",
+            hover_name="libelle_competence", hover_data={"competence": False},
             title=f"Top {TOP_COMPETENCES} des compétences demandées",
-            labels={"libelle_competence": "", "offres": "Nombre d'offres", "exigence": "Niveau"},
+            labels={"competence": "", "offres": "Nombre d'offres", "exigence": "Niveau"},
             color_discrete_map={"Exigée": "#dc2626", "Souhaitée": "#2563eb"},
         )
-        fig_competences.update_layout(yaxis={"categoryorder": "total ascending"})
+        fig_competences.update_layout(yaxis={"categoryorder": "total ascending", "tickfont": {"size": 11}})
 
     geo = (
         offres.dropna(subset=["latitude", "longitude"])
@@ -400,7 +570,8 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
             zoom=4.3, center={"lat": 46.6, "lon": 2.4}, size_max=30, map_style="open-street-map",
             title="Carte des offres par commune", color_continuous_scale="Viridis",
         )
-        fig_carte.update_layout(margin={"l": 0, "r": 0, "t": 40, "b": 0})
+        fig_carte.update_layout(margin={"l": 0, "r": 0, "t": 0, "b": 0}, autosize=True, title=None,
+                                coloraxis_colorbar={"thickness": 12, "title": {"text": ""}})
 
     salaires = offres.dropna(subset=["salaire"])
     if salaires.empty:
@@ -501,7 +672,165 @@ def update_table(contrats, domaines, communes, page_current, page_size, sort_by,
     page_count = max(1, math.ceil(len(table) / page_size))
     page_current = min(max(page_current or 0, 0), page_count - 1)
     start = page_current * page_size
-    return table.iloc[start:start + page_size].to_dict("records"), page_count, page_current
+    rows = table.iloc[start:start + page_size].assign(id=lambda frame: frame["source_offre_id"])
+    return rows.to_dict("records"), page_count, page_current
+
+
+CONTRATS = {"CDI": "CDI", "CDD": "CDD", "MIS": "Intérim", "SAI": "Saisonnier", "CCE": "Profession commerciale"}
+EXIGENCES = {"E": "Exigé", "S": "Souhaité"}
+
+
+def _clean(value) -> str | None:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _euros(value) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    return f"{value:,.0f} € brut / an".replace(",", " ")
+
+
+def _detail_grid(rows: list[tuple[str, object]]) -> html.Dl | None:
+    items = []
+    for label, value in rows:
+        if value in (None, "", []):
+            continue
+        items += [html.Dt(label), html.Dd(value)]
+    return html.Dl(items, className="detail-grid") if items else None
+
+
+def _section(title: str, content) -> list:
+    return [html.H3(title), content] if content else []
+
+
+def _labels_with_requirement(items: list[dict], label_key: str = "libelle") -> list[str]:
+    labels = []
+    for item in items or []:
+        label = _clean(item.get(label_key))
+        if label:
+            requirement = EXIGENCES.get(item.get("exigence"))
+            labels.append(f"{label} ({requirement.lower()})" if requirement else label)
+    return labels
+
+
+def build_offer_details(source_offre_id: str) -> list:
+    offres, competences, _runs, _error = get_data()
+    match = offres[offres["source_offre_id"] == source_offre_id] if not offres.empty else offres
+    if match.empty:
+        return [html.H2("Offre introuvable"), html.P("Cette offre n'est plus présente dans la base.")]
+    offre = match.iloc[0]
+    raw = load_raw_offer(source_offre_id)
+    description, duree_travail = load_offer_text(source_offre_id)
+
+    entreprise = "Entreprise non communiquée" if offre["entreprise_anonyme"] else _clean(offre["raison_sociale"])
+    contrat = _clean(raw.get("typeContratLibelle")) or CONTRATS.get(offre["type_contrat"], offre["type_contrat"])
+    sous_titre = " • ".join(filter(None, [entreprise, _clean(offre["nom_commune"]), contrat]))
+
+    salaire_raw = raw.get("salaire") or {}
+    salaire_parts: list[str] = []
+    for key in ("libelle", "commentaire", "complement1", "complement2"):
+        part = _clean(salaire_raw.get(key))
+        if part and not any(part in existing for existing in salaire_parts):
+            salaire_parts.append(part)
+    salaire_texte = " — ".join(salaire_parts)
+    duree = _clean(raw.get("dureeTravailLibelle")) or _clean(duree_travail)
+    duree_converti = _clean(raw.get("dureeTravailLibelleConverti"))
+    if duree and duree_converti and duree_converti not in duree:
+        duree = f"{duree} ({duree_converti})"
+    lieu = raw.get("lieuTravail") or {}
+    publication = offre["date_publication"].strftime("%d/%m/%Y") if pd.notna(offre["date_publication"]) else None
+
+    infos = _detail_grid([
+        ("Référence", source_offre_id),
+        ("Date de publication", publication),
+        ("Type de contrat", contrat),
+        ("Durée du travail", html.Span(duree, style={"whiteSpace": "pre-wrap"}) if duree else None),
+        ("Salaire indiqué", salaire_texte or "Non précisé"),
+        ("Salaire annuel estimé", _euros(offre["salaire"])),
+        ("Lieu de travail", _clean(lieu.get("libelle")) or _clean(offre["nom_commune"])),
+        ("Nombre de postes", _clean(raw.get("nombrePostes"))),
+        ("Expérience", _clean(raw.get("experienceLibelle"))),
+        ("Qualification", _clean(raw.get("qualificationLibelle"))),
+        ("Déplacements", _clean(raw.get("deplacementLibelle"))),
+        ("Alternance", "Oui" if raw.get("alternance") else None),
+        ("Accessible aux personnes handicapées", "Oui" if raw.get("accessibleTH") else None),
+    ])
+    metier = _detail_grid([
+        ("Métier (code ROME)", f"{offre['libelle_fiche_metier']} ({offre['rome_code']})"),
+        ("Appellation", _clean(raw.get("appellationlibelle"))),
+        ("Domaine professionnel", _clean(offre["domaine_professionnel"])),
+        ("Entreprise", entreprise),
+        ("Secteur d'activité", _clean(raw.get("secteurActiviteLibelle"))),
+        ("Taille de l'établissement", _clean(raw.get("trancheEffectifEtab"))),
+    ])
+
+    competences_offre = competences[competences["offre_id"] == offre["offre_id"]] if not competences.empty else competences
+    tags = [
+        html.Span(row.libelle_competence, className=f"tag tag-{'E' if row.exigence == 'Exigée' else 'S'}",
+                  title=row.exigence)
+        for row in competences_offre.sort_values("exigence").itertuples()
+    ]
+    if tags:
+        tags.append(html.Div("Rouge : exigée • Bleu : souhaitée", className="table-hint"))
+
+    formations = []
+    for item in raw.get("formations") or []:
+        label = " — ".join(filter(None, [_clean(item.get("niveauLibelle")), _clean(item.get("domaineLibelle"))]))
+        if label:
+            requirement = EXIGENCES.get(item.get("exigence"))
+            formations.append(f"{label} ({requirement.lower()})" if requirement else label)
+    qualites = [_clean(item.get("libelle")) for item in raw.get("qualitesProfessionnelles") or []]
+    profil = _detail_grid([
+        ("Formation", html.Ul([html.Li(f) for f in formations]) if formations else None),
+        ("Langues", ", ".join(_labels_with_requirement(raw.get("langues")))),
+        ("Permis", ", ".join(_labels_with_requirement(raw.get("permis")))),
+        ("Qualités professionnelles", ", ".join(filter(None, qualites))),
+    ])
+
+    url_offre = _clean((raw.get("origineOffre") or {}).get("urlOrigine")) or FRANCE_TRAVAIL_OFFER_URL.format(source_offre_id)
+    url_postuler = _clean((raw.get("contact") or {}).get("urlPostulation"))
+    liens = [html.A("Voir l'offre sur France Travail ↗", href=url_offre, target="_blank", rel="noopener noreferrer",
+                    className="btn-link btn-primary")]
+    if url_postuler and url_postuler.startswith(("http://", "https://")):
+        liens.append(html.A("Postuler sur le site du recruteur ↗", href=url_postuler, target="_blank",
+                            rel="noopener noreferrer", className="btn-link btn-secondary"))
+    else:
+        liens.append(html.Span("Pas de lien de candidature direct : postulez depuis France Travail.", className="no-link"))
+
+    return [
+        html.H2(offre["libelle_poste"]),
+        html.Div(sous_titre, className="modal-sub"),
+        html.Div(liens, className="links"),
+        *_section("Informations clés", infos),
+        *_section("Description du poste", html.Div(_clean(raw.get("description")) or _clean(description)
+                                                     or "Aucune description fournie.", className="description")),
+        *_section("Compétences demandées", html.Div(tags) if tags else html.Div("Aucune compétence listée.",
+                                                                                  className="no-link")),
+        *_section("Profil recherché", profil),
+        *_section("Métier et entreprise", metier),
+    ]
+
+
+@app.callback(
+    Output("offre-modal", "style"),
+    Output("modal-contenu", "children"),
+    Output("table-offres", "active_cell"),
+    Output("table-offres", "selected_cells"),
+    Input("table-offres", "active_cell"),
+    Input("modal-fermer", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_offer_modal(active_cell, _close_clicks):
+    if ctx.triggered_id == "modal-fermer" or not active_cell:
+        return {"display": "none"}, no_update, None, []
+    source_offre_id = active_cell.get("row_id")
+    if not source_offre_id:
+        return no_update, no_update, None, []
+    # active_cell est remis à None pour qu'un nouveau clic sur la même ligne rouvre la fiche.
+    return {"display": "flex"}, build_offer_details(str(source_offre_id)), None, []
 
 
 if __name__ == "__main__":

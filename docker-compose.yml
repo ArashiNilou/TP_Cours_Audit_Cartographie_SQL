@@ -236,6 +236,9 @@ services:
       PGUSER: ${PGUSER:-postgres}
       PGPASSWORD: ${PGPASSWORD:-postgres}
       DATAVIZ_REFRESH_SECONDS: ${DATAVIZ_REFRESH_SECONDS:-60}
+      DATA_LAKE_ROOT: /data-lake
+    volumes:
+      - data_lake:/data-lake:ro
     ports:
       - "${DATAVIZ_PORT:-8050}:8050"
     healthcheck:

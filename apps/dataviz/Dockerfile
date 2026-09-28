@@ -12,4 +12,4 @@ COPY app.py /app/app.py
 
 EXPOSE 8050
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--workers", "2", "--worker-class", "gthread", "--threads", "4", "--timeout", "60", "app:server"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8050", "--workers", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "60", "app:server"]

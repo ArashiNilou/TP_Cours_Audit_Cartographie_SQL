@@ -293,25 +293,25 @@ def _figure_layout(figure: go.Figure) -> go.Figure:
     Input("refresh", "n_intervals"),
 )
 def update_context(_n_intervals):
-    """?l?ments ind?pendants des filtres : bandeau d'erreur, listes et suivi Spark."""
+    """Éléments indépendants des filtres : bandeau d'erreur, listes et suivi Spark."""
     offres_all, _competences, runs, error = get_data()
     banner = html.Div(error, className="error") if error else None
 
     if runs.empty:
-        fig_pipeline = empty_figure("Aucun passage Spark enregistr?")
+        fig_pipeline = empty_figure("Aucun passage Spark enregistré")
     else:
         runs_long = runs.melt(
             id_vars="started_at", value_vars=["raw_count", "clean_count", "rejected_count"],
             var_name="type", value_name="lignes",
         )
         runs_long["type"] = runs_long["type"].map(
-            {"raw_count": "Brutes (raw)", "clean_count": "Propres (clean)", "rejected_count": "Rejet?es"}
+            {"raw_count": "Brutes (raw)", "clean_count": "Propres (clean)", "rejected_count": "Rejetées"}
         )
         fig_pipeline = _figure_layout(px.line(
             runs_long, x="started_at", y="lignes", color="type", markers=True,
             title="Pipeline : offres brutes vs propres par passage Spark",
             labels={"started_at": "Passage Spark", "lignes": "Nombre d'offres", "type": ""},
-            color_discrete_map={"Brutes (raw)": "#6b7280", "Propres (clean)": "#16a34a", "Rejet?es": "#dc2626"},
+            color_discrete_map={"Brutes (raw)": "#6b7280", "Propres (clean)": "#16a34a", "Rejetées": "#dc2626"},
         ))
 
     if offres_all.empty:
@@ -342,7 +342,7 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
 
     if offres_all.empty:
         empty = empty_figure(error or "Aucune offre en base : attendez un passage de Spark")
-        kpis = [kpi_card(label, "0") for label in ("Offres", "Communes", "Entreprises", "Comp?tences", "Salaire moyen")]
+        kpis = [kpi_card(label, "0") for label in ("Offres", "Communes", "Entreprises", "Compétences", "Salaire moyen")]
         return kpis, empty, empty, empty, empty, empty
 
     offres = _apply_filters(offres_all, contrats, domaines, communes)
@@ -354,8 +354,8 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
         kpi_card("Offres", f"{len(offres)}"),
         kpi_card("Communes", f"{offres['code_insee'].nunique()}"),
         kpi_card("Entreprises", f"{offres.loc[~offres['entreprise_anonyme'], 'raison_sociale'].nunique()}"),
-        kpi_card("Comp?tences distinctes", f"{competences['libelle_competence'].nunique()}"),
-        kpi_card("Salaire moyen estim?", "n.c." if pd.isna(salaire_moyen) else f"{salaire_moyen:,.0f} ?".replace(",", " ")),
+        kpi_card("Compétences distinctes", f"{competences['libelle_competence'].nunique()}"),
+        kpi_card("Salaire moyen estimé", "n.c." if pd.isna(salaire_moyen) else f"{salaire_moyen:,.0f} €".replace(",", " ")),
     ]
 
     if offres.empty:
@@ -370,7 +370,7 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
     fig_contrats.update_layout(showlegend=False)
 
     if competences.empty:
-        fig_competences = empty_figure("Aucune comp?tence renseign?e")
+        fig_competences = empty_figure("Aucune compétence renseignée")
     else:
         top = competences["libelle_competence"].value_counts().head(TOP_COMPETENCES).index
         par_comp = (
@@ -379,9 +379,9 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
         )
         fig_competences = px.bar(
             par_comp, x="offres", y="libelle_competence", color="exigence", orientation="h",
-            title=f"Top {TOP_COMPETENCES} des comp?tences demand?es",
+            title=f"Top {TOP_COMPETENCES} des compétences demandées",
             labels={"libelle_competence": "", "offres": "Nombre d'offres", "exigence": "Niveau"},
-            color_discrete_map={"Exig?e": "#dc2626", "Souhait?e": "#2563eb"},
+            color_discrete_map={"Exigée": "#dc2626", "Souhaitée": "#2563eb"},
         )
         fig_competences.update_layout(yaxis={"categoryorder": "total ascending"})
 
@@ -392,7 +392,7 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
         .reset_index()
     )
     if geo.empty:
-        fig_carte = empty_figure("Aucune commune g?olocalis?e")
+        fig_carte = empty_figure("Aucune commune géolocalisée")
     else:
         fig_carte = px.scatter_map(
             geo, lat="latitude", lon="longitude", size="offres", color="offres",
@@ -406,11 +406,11 @@ def update_dashboard(contrats, domaines, communes, _n_intervals):
     if salaires.empty:
         fig_salaires = empty_figure("Aucun salaire exploitable")
     else:
-        # Seuls les points atypiques sont dessin?s : la figure reste l?g?re.
+        # Seuls les points atypiques sont dessinés : la figure reste légère.
         fig_salaires = px.box(
             salaires, x="type_contrat", y="salaire", color="type_contrat", points="outliers",
-            title="Salaire brut annuel estim? par contrat",
-            labels={"type_contrat": "Contrat", "salaire": "Salaire (? / an)"},
+            title="Salaire brut annuel estimé par contrat",
+            labels={"type_contrat": "Contrat", "salaire": "Salaire (€ / an)"},
         )
         fig_salaires.update_layout(showlegend=False)
 
@@ -439,7 +439,7 @@ _COMPARATORS = {
 
 
 def _filter_table(table: pd.DataFrame, filter_query: str) -> pd.DataFrame:
-    """Applique la syntaxe de filtre DataTable (`{col} op valeur && ...`) c?t? serveur."""
+    """Applique la syntaxe de filtre DataTable (`{col} op valeur && ...`) côté serveur."""
     for clause in (filter_query or "").split(" && "):
         match = _FILTER_PATTERN.match(clause.strip())
         if not match or match["column"] not in _TABLE_COLUMN_IDS:
@@ -483,7 +483,7 @@ def _filter_table(table: pd.DataFrame, filter_query: str) -> pd.DataFrame:
     Input("refresh", "n_intervals"),
 )
 def update_table(contrats, domaines, communes, page_current, page_size, sort_by, filter_query, _n_intervals):
-    """Tableau pagin? c?t? serveur : seules les lignes de la page affich?e sont envoy?es."""
+    """Tableau paginé côté serveur : seules les lignes de la page affichée sont envoyées."""
     offres_all, _competences, _runs, _error = get_data()
     if offres_all.empty:
         return [], 1, 0

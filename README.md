@@ -59,12 +59,3 @@ Transférer les données du Data Lake vers le Data Warehouse :
 * **Résumé métier** : `PYTHONPATH=. .venv/bin/python main.py`
 * **Grafana (Monitoring Infra)** : `http://localhost:3000` (admin/admin)
 * **Kafka UI** : `http://localhost:8080`
-
-##  Critères de Réussite Valides
-- [x] Deux sources complémentaires intégrées
-- [x] Le scraper web alimente Kafka en temps réel
-- [x] PySpark produit les données propres
-- [x] PostgreSQL alimenté automatiquement
-- [x] Indicateur Raw vs Clean (Via Custom Exporter sur le port 8000)
-- [x] Orchestration complète via docker-compose
-- [x] Structure de dépôt conforme (api, kafka, datalake, postgres, etc.)
